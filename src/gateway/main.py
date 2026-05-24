@@ -39,7 +39,7 @@ import json
 import uuid
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
@@ -197,6 +197,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# =============================================================================
+# 内部请求验证中间件（生产环境拒绝未经 Django BFF 的请求）
+# =============================================================================
+_ITSM_PATHS = {"/api/v1/itsm/webhook", "/api/v1/itsm/webhook/firewall-policy"}
+
+
+@app.middleware("http")
+async def bff_origin_check(request: Request, call_next):
+    forwarded_from = request.headers.get("X-Forwarded-From", "")
+    if request.url.path not in _ITSM_PATHS and forwarded_from != "django-bff":
+        import os
+        if os.getenv("ENFORCE_BFF_ORIGIN", "").lower() in ("true", "1"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Access only allowed via Django BFF"},
+            )
+    return await call_next(request)
 
 
 # =============================================================================

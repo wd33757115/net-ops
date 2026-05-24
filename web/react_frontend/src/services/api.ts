@@ -99,3 +99,15 @@ export const conversationApi = {
     return response.data
   }
 }
+
+export const wsApi = {
+  connectChat: (threadId?: string): WebSocket => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.host
+    let url = `${protocol}//${host}/ws/v1/chat`
+    if (threadId) {
+      url += `?thread_id=${threadId}`
+    }
+    return new WebSocket(url)
+  }
+}

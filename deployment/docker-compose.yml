@@ -169,7 +169,7 @@ services:
     environment:
       - POSTGRES_HOST=postgres
       - DJANGO_DEBUG=true
-      - FASTAPI_BASE_URL=http://host.docker.internal:8000
+      - FASTAPI_BASE_URL=http://fastapi:8000
       - TZ=Asia/Shanghai
     volumes:
       - django-static:/app/web/django_backend/staticfiles

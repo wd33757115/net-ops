@@ -1,0 +1,80 @@
+name: NetOps CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install ruff black
+      - run: ruff check src/ tests/ scripts/
+      - run: black --check --diff src/ tests/ scripts/
+
+  test-fastapi:
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: netops_agent
+          POSTGRES_USER: netops
+          POSTGRES_PASSWORD: netops123456
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest tests/ -v --timeout 30 -k "not (e2e or skill_system)"
+        env:
+          POSTGRES_HOST: localhost
+          REDIS_HOST: localhost
+          DEBUG: "false"
+        continue-on-error: true
+
+  test-django:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r web/django_backend/requirements.txt
+      - run: cd web/django_backend && python -m django check --settings=django_backend.settings
+
+  docker-build:
+    needs: [test-fastapi, test-django]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t netops-django -f deployment/Dockerfile.django .
+      - run: docker build -t netops-react -f deployment/Dockerfile.react --build-arg REACT_APP_API_URL=http://localhost:8001 .

@@ -30,9 +30,9 @@ RUN python manage.py collectstatic --noinput || true
 # 暴露端口
 EXPOSE 8001
 
-# 根据环境变量决定使用开发服务器还是 Gunicorn
+# 开发环境用 runserver，生产环境用 uvicorn ASGI
 CMD if [ "$DJANGO_DEBUG" = "True" ]; then \
       python manage.py runserver 0.0.0.0:8001; \
     else \
-      gunicorn --workers=4 --bind=0.0.0.0:8001 django_backend.wsgi:application; \
+      uvicorn django_backend.asgi:application --host 0.0.0.0 --port 8001 --workers 4; \
     fi
