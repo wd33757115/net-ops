@@ -1,0 +1,407 @@
+"""
+语义路由器模块
+
+提供两阶段路由：
+1. ChromaDB embedding 快速匹配
+2. LLM Judge 精准判断
+
+支持 Progressive Disclosure：只将匹配的 Skill 指令注入上下文。
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SkillMatch:
+    """
+    Skill 匹配结果
+
+    Attributes:
+        skill_name: 匹配的 Skill 名称
+        confidence: 置信度 (0-1)
+        match_type: 匹配类型 (trigger, tag, semantic, llm)
+        reason: 匹配原因说明
+    """
+    skill_name: str
+    confidence: float
+    match_type: str
+    reason: str
+
+
+class SemanticRouter:
+    """
+    语义路由器
+
+    两阶段路由：
+    1. 关键词/触发词快速匹配
+    2. ChromaDB embedding 语义匹配（可选）
+    3. LLM Judge 精准判断（可选）
+    """
+
+    def __init__(
+        self,
+        rag_service=None,
+        skill_loader=None,
+        embedding_model: str = "BAAI/bge-m3",
+        use_llm_judge: bool = True,
+        use_embedding: bool = True,
+    ):
+        """
+        初始化路由器
+
+        Args:
+            rag_service: RAG 服务实例（用于 embedding）
+            skill_loader: Skill 加载器实例
+            embedding_model: Embedding 模型名称
+            use_llm_judge: 是否使用 LLM Judge
+            use_embedding: 是否使用 embedding 匹配
+        """
+        self.rag_service = rag_service
+        self.skill_loader = skill_loader
+        self.embedding_model = embedding_model
+        self.use_llm_judge = use_llm_judge
+        self.use_embedding = use_embedding
+
+        self._embedding_cache: dict[str, list[float]] = {}
+        self._llm = None
+        self._embedder = None
+
+    def _init_llm(self):
+        """延迟初始化 LLM"""
+        if self._llm is None:
+            try:
+                from langchain_deepseek import ChatDeepSeek
+
+                from src.common.config import get_settings
+
+                settings = get_settings()
+                self._llm = ChatDeepSeek(
+                    model=settings.LLM_MODEL,
+                    temperature=0.1,
+                    api_key=settings.DEEPSEEK_API_KEY,
+                    request_timeout=30
+                )
+            except Exception as e:
+                logger.warning(f"LLM 初始化失败: {e}")
+                self.use_llm_judge = False
+
+    def route(self, query: str, top_k: int = 3) -> list[SkillMatch]:
+        """
+        路由用户查询
+
+        Args:
+            query: 用户查询
+            top_k: 返回前 k 个匹配结果
+
+        Returns:
+            List[SkillMatch]: 匹配的 Skill 列表（按置信度降序）
+        """
+        matches = []
+
+        # Stage 1: 触发词/关键词快速匹配
+        matches.extend(self._keyword_match(query))
+
+        # Stage 2: Embedding 语义匹配（可选，性能开销较大）
+        if self.use_embedding:
+            semantic_matches = self._semantic_match(query, top_k)
+            for match in semantic_matches:
+                # 合并结果，提高置信度
+                existing = next(
+                    (m for m in matches if m.skill_name == match.skill_name),
+                    None
+                )
+                if existing:
+                    existing.confidence = max(existing.confidence, match.confidence)
+                else:
+                    matches.append(match)
+
+        # Stage 3: LLM Judge 精准判断（可选）
+        if self.use_llm_judge and matches:
+            matches = self._llm_judge(query, matches)
+
+        # 过滤掉已禁用的 Skill
+        matches = [m for m in matches if self._is_skill_enabled(m.skill_name)]
+
+        # 按置信度排序，取前 k 个
+        matches.sort(key=lambda x: x.confidence, reverse=True)
+        return matches[:top_k]
+
+    def _is_skill_enabled(self, skill_name: str) -> bool:
+        """检查 Skill 是否启用"""
+        if not self.skill_loader:
+            return True
+        metadata = self.skill_loader.get_metadata(skill_name)
+        if metadata is None:
+            return False
+        return getattr(metadata, 'enabled', True)
+
+    def _keyword_match(self, query: str) -> list[SkillMatch]:
+        """
+        关键词/触发词快速匹配
+
+        Args:
+            query: 用户查询
+
+        Returns:
+            List[SkillMatch]: 匹配结果
+        """
+        matches = []
+        query_lower = query.lower()
+
+        if not self.skill_loader:
+            return matches
+
+        # 获取所有 Skill 元数据
+        skills = self.skill_loader.list_all_metadata()
+
+        for skill in skills:
+            # 检查 triggers
+            triggers = getattr(skill, 'triggers', [])
+            for trigger in triggers:
+                if trigger.lower() in query_lower:
+                    matches.append(SkillMatch(
+                        skill_name=skill.name,
+                        confidence=0.95,
+                        match_type="trigger",
+                        reason=f"匹配触发词: {trigger}"
+                    ))
+                    break
+
+            # 检查 tags
+            if not any(m.skill_name == skill.name for m in matches):
+                tags = getattr(skill, 'tags', [])
+                for tag in tags:
+                    if tag.lower() in query_lower:
+                        matches.append(SkillMatch(
+                            skill_name=skill.name,
+                            confidence=0.7,
+                            match_type="tag",
+                            reason=f"匹配标签: {tag}"
+                        ))
+                        break
+
+            # 检查 description
+            if not any(m.skill_name == skill.name for m in matches):
+                desc = getattr(skill, 'description', '').lower()
+                if desc and desc in query_lower:
+                    matches.append(SkillMatch(
+                        skill_name=skill.name,
+                        confidence=0.6,
+                        match_type="description",
+                        reason="匹配描述关键词"
+                    ))
+
+        return matches
+
+    def _semantic_match(self, query: str, top_k: int) -> list[SkillMatch]:
+        """
+        ChromaDB embedding 语义匹配
+
+        Args:
+            query: 用户查询
+            top_k: 返回前 k 个
+
+        Returns:
+            List[SkillMatch]: 匹配结果
+        """
+        matches = []
+        skills = self.skill_loader.list_all_metadata()
+
+        try:
+            # 计算查询 embedding
+            query_embedding = self._get_embedding(query)
+
+            similarities = []
+            for skill in skills:
+                # 计算 Skill 描述 embedding
+                triggers = getattr(skill, "triggers", []) or []
+                skill_text = f"{skill.name}: {skill.description} {' '.join(skill.tags or [])} {' '.join(triggers)}"
+                skill_embedding = self._get_embedding(skill_text)
+
+                # 计算余弦相似度
+                similarity = self._cosine_similarity(query_embedding, skill_embedding)
+                similarities.append((skill.name, similarity))
+
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            for skill_name, similarity in similarities[:top_k]:
+                matches.append(SkillMatch(
+                    skill_name=skill_name,
+                    confidence=float(similarity),
+                    match_type="semantic",
+                    reason=f"语义相似度: {similarity:.2f}"
+                ))
+
+        except Exception as e:
+            logger.error(f"语义匹配失败: {e}")
+
+        return matches[:top_k]
+
+    def _llm_judge(
+        self,
+        query: str,
+        candidates: list[SkillMatch]
+    ) -> list[SkillMatch]:
+        """
+        LLM Judge 精准判断
+
+        让 LLM 判断哪个 Skill 最适合处理用户请求。
+
+        Args:
+            query: 用户查询
+            candidates: 候选 Skill 列表
+
+        Returns:
+            List[SkillMatch]: 精选后的匹配结果
+        """
+        if not candidates:
+            return []
+
+        self._init_llm()
+        if not self._llm:
+            return candidates
+
+        try:
+            # 获取 Skill 描述
+            skill_descriptions = []
+            for match in candidates:
+                skill = self.skill_loader.get_metadata(match.skill_name)
+                if skill:
+                    skill_descriptions.append(skill.get_llm_description())
+
+            skills_text = "\n\n".join(skill_descriptions)
+
+            prompt = f"""你是一个专业的 Skill 选择助手。
+
+【用户请求】
+{query}
+
+【候选 Skills】
+{skills_text}
+
+【任务】
+分析用户请求，选择最合适的一个 Skill 来处理。
+
+输出要求（只输出 JSON）：
+{{
+  "selected_skill": "skill_name 或 null",
+  "confidence": 0.0-1.0,
+  "reason": "选择原因"
+}}
+
+如果用户请求是知识性问题（如询问概念、原理、方法等），应该选择 null 走 RAG。
+"""
+
+            response = self._llm.invoke(prompt)
+            content = response.content.strip()
+
+            # 解析 JSON
+            import json
+            import re
+
+            # 提取 JSON（可能包含在 ```json 中）
+            json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(1)
+            else:
+                # 尝试直接解析
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    content = json_match.group(0)
+
+            result = json.loads(content)
+
+            selected = result.get('selected_skill')
+            confidence = result.get('confidence', 0.5)
+            reason = result.get('reason', '')
+
+            if selected:
+                # 更新候选列表的置信度
+                for match in candidates:
+                    if match.skill_name == selected:
+                        match.confidence = confidence
+                        match.reason = f"[LLM Judge] {reason}"
+                        match.match_type = "llm"
+                        break
+
+                return [m for m in candidates if m.skill_name == selected]
+
+            else:
+                # 没有合适的 Skill，返回空列表（走 RAG）
+                logger.info("[LLM Judge] 没有合适的 Skill，建议走 RAG")
+                return []
+
+        except Exception as e:
+            logger.error(f"LLM Judge 失败: {e}")
+            return candidates  # Fallback: 返回原始候选列表
+
+    def _get_embedding(self, text: str) -> list[float]:
+        """获取文本 embedding"""
+        if text in self._embedding_cache:
+            return self._embedding_cache[text]
+
+        try:
+            if self._embedder is None:
+                from sentence_transformers import SentenceTransformer
+                self._embedder = SentenceTransformer(self.embedding_model)
+
+            embedding = self._embedder.encode(text).tolist()
+
+            self._embedding_cache[text] = embedding
+            return embedding
+
+        except Exception as e:
+            logger.error(f"Embedding 计算失败: {e}")
+            return []
+
+    def _cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
+        """计算余弦相似度"""
+        import numpy as np
+
+        if not vec1 or not vec2:
+            return 0.0
+
+        vec1_np = np.array(vec1)
+        vec2_np = np.array(vec2)
+
+        dot_product = np.dot(vec1_np, vec2_np)
+        norm1 = np.linalg.norm(vec1_np)
+        norm2 = np.linalg.norm(vec2_np)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        return float(dot_product / (norm1 * norm2))
+
+    def invalidate_cache(self):
+        """清空缓存"""
+        self._embedding_cache.clear()
+
+
+def route_query(
+    query: str,
+    skill_loader=None,
+    rag_service=None,
+    top_k: int = 3
+) -> list[SkillMatch]:
+    """
+    便捷路由函数
+
+    Args:
+        query: 用户查询
+        skill_loader: Skill 加载器
+        rag_service: RAG 服务
+        top_k: 返回前 k 个
+
+    Returns:
+        List[SkillMatch]: 匹配结果
+    """
+    router = SemanticRouter(
+        skill_loader=skill_loader,
+        rag_service=rag_service
+    )
+    return router.route(query, top_k)

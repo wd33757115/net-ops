@@ -1,0 +1,121 @@
+import sys
+from pathlib import Path
+
+BASE_DIR = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(BASE_DIR))
+
+import io
+from typing import BinaryIO, Optional
+
+from src.common.config import get_settings
+
+try:
+    from minio import Minio
+    from minio.error import S3Error
+    MINIO_AVAILABLE = True
+except ImportError:
+    MINIO_AVAILABLE = False
+
+settings = get_settings()
+
+
+class MinIOStorage:
+    """MinIO S3 兼容文件存储客户端"""
+
+    _instance: Optional["MinIOStorage"] = None
+    _client = None
+    _bucket_name = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+
+    def _initialize(self):
+        try:
+            self._client = Minio(
+                settings.MINIO_ENDPOINT,
+                access_key=settings.MINIO_ACCESS_KEY,
+                secret_key=settings.MINIO_SECRET_KEY,
+                secure=settings.MINIO_SECURE
+            )
+            self._bucket_name = settings.MINIO_BUCKET_NAME
+
+            if not self._client.bucket_exists(self._bucket_name):
+                self._client.make_bucket(self._bucket_name)
+                print(f"✅ MinIO: 创建 Bucket '{self._bucket_name}'")
+
+            print("✅ MinIO 存储客户端初始化成功")
+        except Exception as e:
+            print(f"⚠️ MinIO 初始化失败(可稍后启动): {e}")
+            self._client = None
+
+    def is_ready(self) -> bool:
+        return self._client is not None
+
+    def upload_file(
+        self,
+        object_name: str,
+        file_data: bytes | BinaryIO,
+        content_type: str = "application/octet-stream"
+    ) -> bool:
+        if not self._client:
+            return False
+
+        try:
+            if isinstance(file_data, bytes):
+                file_data = io.BytesIO(file_data)
+                file_len = len(file_data.getvalue())
+            else:
+                file_data.seek(0, 2)
+                file_len = file_data.tell()
+                file_data.seek(0)
+
+            self._client.put_object(
+                bucket_name=self._bucket_name,
+                object_name=object_name,
+                data=file_data,
+                length=file_len,
+                content_type=content_type
+            )
+            return True
+        except S3Error as e:
+            print(f"❌ MinIO 上传失败: {e}")
+            return False
+
+    def get_presigned_url(self, object_name: str, expires: int = 3600 * 24) -> str | None:
+        if not self._client:
+            return None
+
+        try:
+            from datetime import timedelta
+            url = self._client.presigned_get_object(
+                bucket_name=self._bucket_name,
+                object_name=object_name,
+                expires=timedelta(seconds=expires)
+            )
+            return str(url)
+        except S3Error as e:
+            print(f"❌ MinIO 生成预签名URL失败: {e}")
+            return None
+
+    def download_file(self, object_name: str) -> bytes | None:
+        if not self._client:
+            return None
+
+        try:
+            response = self._client.get_object(self._bucket_name, object_name)
+            return response.read()
+        except S3Error:
+            return None
+
+
+def get_minio_storage() -> MinIOStorage:
+    return MinIOStorage()
+
+
+try:
+    minio_storage = get_minio_storage()
+except Exception:
+    pass

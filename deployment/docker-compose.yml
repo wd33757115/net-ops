@@ -1,0 +1,196 @@
+version: '3.8'
+
+networks:
+  netops-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  chroma-data:
+  rabbitmq-data:
+  django-static:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: netops-postgres
+    environment:
+      POSTGRES_DB: netops_agent
+      POSTGRES_USER: netops
+      POSTGRES_PASSWORD: netops123456
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U netops -d netops_agent" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: netops-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: netops-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      TZ: Asia/Shanghai
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: netops-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      TZ: Asia/Shanghai
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: netops-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage:z
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:6333/readyz 2>/dev/null || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  langfuse:
+    image: ghcr.io/langfuse/langfuse:latest
+    container_name: netops-langfuse
+    ports:
+      - "3001:3000"
+    environment:
+      DATABASE_URL: postgresql://netops:netops123456@postgres:5432/netops_agent
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: my-secret-key-2026-netops
+      SALT: netops-salt-2026
+      TELEMETRY_ENABLED: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  fastapi:
+    image: python:3.11-slim
+    container_name: netops-fastapi
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+      - QDRANT_HOST=qdrant
+      - MINIO_ENDPOINT=minio:9000
+      - DEBUG=true
+      - TZ=Asia/Shanghai
+    volumes:
+      - ..:/app
+    working_dir: /app
+    command: >
+      bash -c "pip install -r requirements.txt &&
+               python -m uvicorn src.gateway.main:app --host 0.0.0.0 --port 8000 --reload"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  django:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.django
+    container_name: netops-django
+    ports:
+      - "8001:8001"
+    env_file:
+      - ../.env
+    environment:
+      - POSTGRES_HOST=postgres
+      - DJANGO_DEBUG=true
+      - FASTAPI_BASE_URL=http://host.docker.internal:8000
+      - TZ=Asia/Shanghai
+    volumes:
+      - django-static:/app/web/django_backend/staticfiles
+      - ..:/app
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  react:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.react
+      args:
+        - REACT_APP_API_URL=http://localhost:8001
+    container_name: netops-react
+    ports:
+      - "3000:80"
+    depends_on:
+      - django
+    restart: unless-stopped
+    networks:
+      - netops-network

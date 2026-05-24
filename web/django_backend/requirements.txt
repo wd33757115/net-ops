@@ -1,0 +1,7 @@
+Django>=4.2,<5.0
+djangorestframework>=3.14
+django-cors-headers>=4.3
+whitenoise>=6.5
+python-dotenv>=1.0
+requests>=2.31
+gunicorn>=21.0
