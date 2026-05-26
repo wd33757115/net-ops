@@ -9,6 +9,7 @@ urlpatterns = [
     path("chat/", chat.proxy_chat, name="bff_chat"),
     path("chat/upload/", upload.proxy_chat_upload, name="bff_chat_upload"),
     path("health/", health.proxy_health, name="bff_health"),
+    path("health/diagnostics/", health.proxy_health_diagnostics, name="bff_health_diagnostics"),
     path("gateway/", system.proxy_gateway_info, name="bff_gateway_info"),
     path("tasks/<str:task_id>/", tasks.proxy_task_status, name="bff_task_status"),
     path("conversations/", conversations.proxy_conversations, name="bff_conversations"),

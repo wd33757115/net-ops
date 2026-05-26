@@ -3,52 +3,57 @@ name: firewall-policy-generator
 version: 1.0.0
 description: 防火墙策略生成专家，擅长从Excel文件导入策略规则，生成可直接部署的防火墙配置
 category: security
-tags: [firewall, policy, configuration, network, security]
+tags:
+- firewall
+- policy
+- configuration
+- network
+- security
 author: NetOps Team
 triggers:
-  - "生成防火墙策略"
-  - "防火墙配置"
-  - "创建策略"
-  - "policy file"
+- 生成防火墙策略
+- 防火墙配置
+- 创建策略
+- policy file
 inputs:
-  - name: ticket_id
-    type: string
-    required: false
-    description: 工单号，如 TICKET_001
-  - name: ticket_title
-    type: string
-    required: false
-    description: 工单标题
-  - name: policy_file_url
-    type: string
-    required: false
-    description: 策略Excel文件路径或URL
-  - name: topology_file_url
-    type: string
-    required: false
-    description: 拓扑文件路径或URL，可选
-  - name: requester
-    type: string
-    required: false
-    description: 申请人
-  - name: assignee
-    type: string
-    required: false
-    description: 处理人
+- name: ticket_id
+  type: string
+  required: false
+  description: 工单号，如 TICKET_001
+- name: ticket_title
+  type: string
+  required: false
+  description: 工单标题
+- name: policy_file_url
+  type: string
+  required: false
+  description: 策略Excel文件路径或URL
+- name: topology_file_url
+  type: string
+  required: false
+  description: 拓扑文件路径或URL，可选
+- name: requester
+  type: string
+  required: false
+  description: 申请人
+- name: assignee
+  type: string
+  required: false
+  description: 处理人
 outputs:
-  - name: config_files
-    type: download
-    description: 多厂商防火墙配置文件压缩包
-  - name: policy_report
-    type: text
-    description: 策略生成报告
+- name: config_files
+  type: download
+  description: 多厂商防火墙配置文件压缩包
+- name: policy_report
+  type: text
+  description: 策略生成报告
 references:
-  - type: rag
-    source: firewall-policy-guide
-    description: 防火墙策略编写指南
-  - type: file
-    path: scripts/generate_config.py
-    description: 策略生成脚本（可选）
+- type: rag
+  source: firewall-policy-guide
+  description: 防火墙策略编写指南
+- type: file
+  path: scripts/generate_config.py
+  description: 策略生成脚本（可选）
 enabled: true
 fallback_to_rag: true
 ---

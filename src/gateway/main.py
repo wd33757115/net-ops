@@ -162,6 +162,18 @@ async def lifespan(app: FastAPI):
         print(f"[Lifespan] [WARN] RAG Service load failed: {e}")
         app.state.rag_service = None
 
+    # --- 启动：统一加载 SKILL.md + SkillSystem + Registry ---
+    try:
+        from src.skills.bootstrap import bootstrap_skills
+
+        skill_count = bootstrap_skills(
+            rag_service=getattr(app.state, "rag_service", None),
+            force=True,
+        )
+        print(f"[Lifespan] [OK] Skill bootstrap: {skill_count} SKILL.md skills")
+    except Exception as e:
+        print(f"[Lifespan] [WARN] Skill bootstrap failed: {e}")
+
     # --- 启动：延迟加载 Agent Graph（避免启动时因网络问题卡住）---
     # 图将在第一个请求时按需加载
     app.state.agent_graph = None
@@ -292,6 +304,14 @@ async def health_check():
     )
 
 
+@app.get("/health/diagnostics", tags=["System"], response_model=None)
+async def health_diagnostics():
+    """一键诊断：PostgreSQL / Redis / Celery / MinIO / Qdrant / RAG 等。"""
+    from src.gateway.diagnostics import run_diagnostics
+
+    return run_diagnostics().model_dump(mode="json")
+
+
 @app.post("/api/chat/", tags=["Chat"], response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def chat_endpoint_legacy(request: ChatRequest):
     """Legacy chat endpoint for backward compatibility"""
@@ -362,13 +382,32 @@ async def chat_endpoint(request: ChatRequest):
         print(f"[DEBUG] FastAPI - initial_state keys: {initial_state.keys()}")
         print(f"[DEBUG] FastAPI - initial_state ticket_id: {initial_state.get('ticket_id')}")
 
+        graph_timeout = int(os.getenv("CHAT_GRAPH_TIMEOUT", "170"))
+
         # [Async] run graph.invoke in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(agent_graph.invoke, initial_state, config)
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(agent_graph.invoke, initial_state, config),
+                timeout=graph_timeout,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    f"Agent 处理超时（{graph_timeout}秒）。"
+                    "若执行防火墙/备份类 Skill，请确认 Celery Worker 已启动；"
+                    "首次语义路由可能较慢，触发词命中后应已跳过 Embedding。"
+                ),
+            )
 
         response_msg = result["messages"][-1].content
         next_agent = result.get("next_agent")
         references = result.get("knowledge_references")
         celery_task_id = result.get("celery_task_id")
+
+        from src.gateway.diagnostics import extract_download_url_from_graph_result
+
+        download_url = extract_download_url_from_graph_result(result)
 
         # 保存用户消息和Agent回复到数据库
         conv_service.add_message(
@@ -383,6 +422,7 @@ async def chat_endpoint(request: ChatRequest):
             content=response_msg,
             agent_type=next_agent,
             celery_task_id=celery_task_id,
+            download_url=download_url,
             references=references
         )
 
@@ -396,6 +436,7 @@ async def chat_endpoint(request: ChatRequest):
             agent_type=next_agent,
             task_id=result.get("task_id"),
             celery_task_id=celery_task_id,
+            download_url=download_url,
             references=references
         )
 

@@ -106,8 +106,13 @@ class SemanticRouter:
         # Stage 1: 触发词/关键词快速匹配
         matches.extend(self._keyword_match(query))
 
+        # 已有高置信触发词命中时跳过 Embedding，避免首次请求加载 BGE 模型阻塞聊天（数分钟）
+        has_trigger_hit = any(
+            m.match_type == "trigger" and m.confidence >= 0.9 for m in matches
+        )
+
         # Stage 2: Embedding 语义匹配（可选，性能开销较大）
-        if self.use_embedding:
+        if self.use_embedding and not has_trigger_hit:
             semantic_matches = self._semantic_match(query, top_k)
             for match in semantic_matches:
                 # 合并结果，提高置信度
@@ -227,8 +232,13 @@ class SemanticRouter:
                 similarity = self._cosine_similarity(query_embedding, skill_embedding)
                 similarities.append((skill.name, similarity))
 
+            import os
+
+            semantic_min = float(os.getenv("SEMANTIC_SKILL_MIN_CONFIDENCE", "0.72"))
             similarities.sort(key=lambda x: x[1], reverse=True)
             for skill_name, similarity in similarities[:top_k]:
+                if float(similarity) < semantic_min:
+                    continue
                 matches.append(SkillMatch(
                     skill_name=skill_name,
                     confidence=float(similarity),
@@ -320,7 +330,6 @@ class SemanticRouter:
             reason = result.get('reason', '')
 
             if selected:
-                # 更新候选列表的置信度
                 for match in candidates:
                     if match.skill_name == selected:
                         match.confidence = confidence
@@ -330,10 +339,8 @@ class SemanticRouter:
 
                 return [m for m in candidates if m.skill_name == selected]
 
-            else:
-                # 没有合适的 Skill，返回空列表（走 RAG）
-                logger.info("[LLM Judge] 没有合适的 Skill，建议走 RAG")
-                return []
+            logger.info("[LLM Judge] 建议走 RAG，保留关键词/语义候选: %s", [m.skill_name for m in candidates])
+            return candidates
 
         except Exception as e:
             logger.error(f"LLM Judge 失败: {e}")

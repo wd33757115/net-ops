@@ -31,6 +31,24 @@ export interface ChatResponse {
   references?: any[]
 }
 
+export type ServiceCheckStatus = 'ok' | 'degraded' | 'down' | 'skipped'
+
+export interface ServiceCheck {
+  id: string
+  name: string
+  status: ServiceCheckStatus
+  message: string
+  latency_ms?: number | null
+  detail?: Record<string, unknown> | null
+}
+
+export interface DiagnosticsResponse {
+  status: 'healthy' | 'degraded' | 'unhealthy'
+  timestamp: string
+  summary: string
+  checks: ServiceCheck[]
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -88,6 +106,10 @@ export const chatApi = {
   },
   getHealth: async () => {
     const response = await api.get('/health/')
+    return response.data
+  },
+  getDiagnostics: async (): Promise<DiagnosticsResponse> => {
+    const response = await api.get<DiagnosticsResponse>('/health/diagnostics/')
     return response.data
   },
   getTaskStatus: async (taskId: string) => {

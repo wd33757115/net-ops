@@ -62,6 +62,9 @@ class SkillLoader:
         """
         self._skill_dirs = [Path(d) for d in skill_dirs]
         self._metadata_cache.clear()
+        self._content_cache.clear()
+        if self.cache:
+            self.cache.clear_all()
 
         print(f"[SkillLoader] 扫描 {len(skill_dirs)} 个目录...")
 
@@ -120,51 +123,59 @@ class SkillLoader:
         Returns:
             str: Skill 指令内容
         """
-        # 检查缓存
+        if self.cache:
+            cached = self.cache.get_instructions(skill_name)
+            if cached:
+                return cached
+
         if self._content_cache.get(skill_name):
             content = self._content_cache[skill_name]
-            # 检查是否过期（30分钟）
             if time.time() - content.loaded_at < 1800:
                 return content.instructions
 
-        # 加载 Skill
         metadata = self.get_metadata(skill_name)
         if not metadata:
-            logger.warning(f"Skill 不存在: {skill_name}")
+            logger.warning("Skill 不存在: %s", skill_name)
             return ""
 
-        skill_dir = Path(metadata.skill_path)
-        skill_md = skill_dir / "SKILL.md"
+        skill_dir = Path(metadata.skill_path) if metadata.skill_path else None
+        skill_md = (skill_dir / "SKILL.md") if skill_dir else None
 
-        if not skill_md.exists():
-            logger.error(f"SKILL.md 不存在: {skill_md}")
-            return metadata.instructions  # Fallback: 使用 frontmatter 中的指令
+        if not skill_md or not skill_md.exists():
+            logger.error("SKILL.md 不存在: %s", skill_md)
+            return (metadata.instructions or "").strip()
 
         try:
-            content = skill_md.read_text(encoding='utf-8')
+            from .metadata import normalize_markdown_content, parse_frontmatter, parse_skill_md
 
-            # 解析 frontmatter，提取正文
-            from .metadata import parse_frontmatter
-            _, body = parse_frontmatter(content)
+            raw = normalize_markdown_content(skill_md.read_text(encoding="utf-8"))
+            _, body = parse_frontmatter(raw)
+            instructions = body.strip()
 
-            # 加载引用
-            references = self._load_references(skill_dir, metadata)
+            if not instructions:
+                full_meta = parse_skill_md(skill_md, include_instructions=True)
+                instructions = (full_meta.instructions or "").strip()
 
-            # 缓存内容
+            if not instructions and len(raw.strip()) > 0:
+                instructions = raw.strip()
+
+            references = self._load_references(skill_dir, metadata) if skill_dir else {}
+
             self._content_cache[skill_name] = SkillContent(
                 metadata=metadata,
-                instructions=body.strip(),
+                instructions=instructions,
                 references=references,
-                loaded_at=time.time()
+                loaded_at=time.time(),
             )
+            if self.cache and instructions:
+                self.cache.set_instructions(skill_name, instructions)
 
-            logger.info(f"加载 Skill 内容: {skill_name} ({len(body)} 字符)")
-
-            return body.strip()
+            logger.info("加载 Skill 内容: %s (%s 字符)", skill_name, len(instructions))
+            return instructions
 
         except Exception as e:
-            logger.error(f"加载 Skill 内容失败 {skill_name}: {e}")
-            return metadata.instructions
+            logger.exception("加载 Skill 内容失败 %s: %s", skill_name, e)
+            return (metadata.instructions or "").strip()
 
     def _load_references(
         self,
@@ -213,11 +224,13 @@ class SkillLoader:
         Args:
             skill_name: Skill 名称
         """
-        # 清除缓存
         if skill_name in self._content_cache:
             del self._content_cache[skill_name]
+        if self.cache:
+            self.cache.instructions_cache.delete(skill_name)
 
-        # 重新扫描父目录
+        from .metadata import parse_skill_md
+
         metadata = self._metadata_cache.get(skill_name)
         if metadata:
             skill_md = Path(metadata.skill_path) / "SKILL.md"
@@ -225,13 +238,15 @@ class SkillLoader:
                 try:
                     new_metadata = parse_skill_md(skill_md, include_instructions=False)
                     self._metadata_cache[skill_name] = new_metadata
-                    logger.info(f"重新加载 Skill 元数据: {skill_name}")
+                    logger.info("重新加载 Skill 元数据: %s", skill_name)
                 except Exception as e:
-                    logger.error(f"重新加载失败 {skill_name}: {e}")
+                    logger.error("重新加载失败 %s: %s", skill_name, e)
 
     def invalidate_cache(self):
         """清除所有缓存"""
         self._content_cache.clear()
+        if self.cache:
+            self.cache.clear_all()
         logger.info("Skill 内容缓存已清除")
 
     def get_cache_stats(self) -> dict[str, Any]:

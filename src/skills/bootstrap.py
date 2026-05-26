@@ -1,0 +1,70 @@
+"""
+Skill 统一启动入口
+
+仅使用 SKILL.md（kebab-case 目录）作为真相源：
+1. registry.sync_skills_from_files — 可执行 Skill 注册
+2. SkillSystem — 元数据扫描、路由、Progressive Disclosure 指令
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_BOOTSTRAP_DONE = False
+_LAST_COUNT = 0
+
+
+def get_default_skill_dirs() -> list[str]:
+    base_dir = Path(__file__).parent.parent.parent
+    return [str(base_dir / "src" / "skills")]
+
+
+def normalize_skill_name(name: str) -> str:
+    return name.replace("-", "_").lower().strip()
+
+
+def bootstrap_skills(
+    rag_service=None,
+    skill_dirs: list[str] | None = None,
+    *,
+    force: bool = False,
+) -> int:
+    """
+    统一加载 Skill（幂等，force=True 时强制全量刷新）。
+
+    Args:
+        rag_service: 可选 RAG，用于 SemanticRouter embedding
+        skill_dirs: SKILL.md 根目录列表
+        force: 是否强制重新扫描（热加载、管理 API reload）
+
+    Returns:
+        int: 同步的 Skill 数量
+    """
+    global _BOOTSTRAP_DONE, _LAST_COUNT
+
+    if _BOOTSTRAP_DONE and not force:
+        return _LAST_COUNT
+
+    dirs = skill_dirs or get_default_skill_dirs()
+
+    from src.skills.registry import skill_registry
+    from src.skill_system import get_skill_system
+
+    count = skill_registry.sync_skills_from_files(dirs, force_replace=force)
+    skill_system = get_skill_system()
+    skill_system.reload_all(skill_dirs=dirs, rag_service=rag_service)
+
+    _BOOTSTRAP_DONE = True
+    _LAST_COUNT = count
+    logger.info("Skill bootstrap 完成: %s 个 SKILL.md Skill", count)
+    return count
+
+
+def reset_bootstrap_state() -> None:
+    """测试用：重置 bootstrap 标记。"""
+    global _BOOTSTRAP_DONE, _LAST_COUNT
+    _BOOTSTRAP_DONE = False
+    _LAST_COUNT = 0

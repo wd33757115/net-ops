@@ -36,11 +36,15 @@ function New-LauncherScript {
         [string]$WorkingDirectory,
         [hashtable]$EnvVars,
         [string]$CommandLine,
-        [string]$LogFile
+        [string]$LogFile,
+        [string[]]$PreCommands = @()
     )
     $lines = New-Object System.Collections.Generic.List[string]
     [void]$lines.Add('$ErrorActionPreference = "Continue"')
     [void]$lines.Add("Set-Location -LiteralPath '$(Escape-SingleQuotedPath $WorkingDirectory)'")
+    foreach ($cmd in $PreCommands) {
+        [void]$lines.Add($cmd)
+    }
     foreach ($key in ($EnvVars.Keys | Sort-Object)) {
         $val = Escape-SingleQuotedPath ($EnvVars[$key].ToString())
         [void]$lines.Add("`$env:$key = '$val'")
@@ -78,7 +82,7 @@ if (-not (Test-Path $venvPython)) {
     exit 1
 }
 
-Write-ColorOutput "[Step 0/6] Stop old processes and free ports..." "Yellow"
+Write-ColorOutput "[Step 0/7] Stop old processes and free ports..." "Yellow"
 Stop-ProjectAppProcesses -ProjectRoot $ProjectRoot
 Stop-DockerAppContainers
 if (Test-Path $pidFile) {
@@ -106,7 +110,7 @@ Write-ColorOutput "  [OK] Ports cleared" "Green"
 
 $dotEnv = Import-DotEnvFile -Path (Join-Path $ProjectRoot ".env")
 
-Write-ColorOutput "[Step 1/6] Check Docker..." "Yellow"
+Write-ColorOutput "[Step 1/7] Check Docker..." "Yellow"
 $dockerOk = $false
 if ($SkipMiddleware) {
     Write-ColorOutput "  [SKIP] SkipMiddleware enabled" "Gray"
@@ -117,7 +121,7 @@ if ($SkipMiddleware) {
     Write-ColorOutput "  [WARN] Docker not available - start Docker Desktop, middleware skipped" "Yellow"
 }
 
-Write-ColorOutput "[Step 2/6] Start Docker middleware..." "Yellow"
+Write-ColorOutput "[Step 2/7] Start Docker middleware..." "Yellow"
 if ($dockerOk) {
     $composeFile = Join-Path $ProjectRoot "deployment\docker-compose.middleware.yml"
     if (-not (Ensure-DockerReady -ComposeFile $composeFile)) {
@@ -139,7 +143,7 @@ if ($dockerOk) {
     Write-ColorOutput "  [SKIP] No Docker middleware" "Gray"
 }
 
-Write-ColorOutput "[Step 3/6] Django migrate..." "Yellow"
+Write-ColorOutput "[Step 3/7] Django migrate..." "Yellow"
 Push-Location (Join-Path $ProjectRoot "web\django_backend")
 $env:DJANGO_SETTINGS_MODULE = "django_backend.settings"
 $migrateLog = Join-Path $logDir "django-migrate.log"
@@ -164,7 +168,25 @@ foreach ($k in @("DEEPSEEK_API_KEY", "POSTGRES_PASSWORD", "POSTGRES_USER", "POST
     if ($dotEnv.ContainsKey($k)) { $fastapiEnv[$k] = $dotEnv[$k] }
 }
 
-Write-ColorOutput "[Step 4/6] Start FastAPI :$FastAPIPort ..." "Yellow"
+Write-ColorOutput "[Step 4/7] Start Celery Worker (solo, Windows) ..." "Yellow"
+$celeryLog = Join-Path $logDir "celery.log"
+$celeryLauncher = Join-Path $logDir "celery-launcher.ps1"
+$celeryEnv = @{
+    POSTGRES_HOST = "localhost"
+    REDIS_HOST = "localhost"
+}
+foreach ($k in @("DEEPSEEK_API_KEY", "POSTGRES_PASSWORD", "POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PORT", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND")) {
+    if ($dotEnv.ContainsKey($k)) { $celeryEnv[$k] = $dotEnv[$k] }
+}
+$celeryCmd = '& ''' + $py + ''' -m celery -A src.core.celery_tasks.celery_app worker --loglevel=info -P solo'
+New-LauncherScript -Path $celeryLauncher -WorkingDirectory $ProjectRoot -EnvVars $celeryEnv -CommandLine $celeryCmd -LogFile $celeryLog -PreCommands @(
+    'Remove-Item Env:DJANGO_SETTINGS_MODULE -ErrorAction SilentlyContinue'
+)
+$pids["celery"] = (Start-LauncherProcess -LauncherPath $celeryLauncher).Id
+Write-ColorOutput "  [OK] Celery PID=$($pids['celery']) (log: celery.log)" "Green"
+Start-Sleep -Seconds 5
+
+Write-ColorOutput "[Step 5/7] Start FastAPI :$FastAPIPort ..." "Yellow"
 $fastapiLog = Join-Path $logDir "fastapi.log"
 $fastapiLauncher = Join-Path $logDir "fastapi-launcher.ps1"
 $fastapiCmd = '& ''' + $py + ''' -m uvicorn src.gateway.main:app --host 0.0.0.0 --port ' + $FastAPIPort + ' --reload'
@@ -172,7 +194,7 @@ New-LauncherScript -Path $fastapiLauncher -WorkingDirectory $ProjectRoot -EnvVar
 $pids["fastapi"] = (Start-LauncherProcess -LauncherPath $fastapiLauncher).Id
 Write-ColorOutput "  [OK] FastAPI PID=$($pids['fastapi']) USE_SUPERVISOR_V2=$useV2" "Green"
 
-Write-ColorOutput "[Step 5/6] Start Django BFF :$DjangoPort ..." "Yellow"
+Write-ColorOutput "[Step 6/7] Start Django BFF :$DjangoPort ..." "Yellow"
 $djangoLog = Join-Path $logDir "django.log"
 $djangoDir = Join-Path $ProjectRoot "web\django_backend"
 $djangoLauncher = Join-Path $logDir "django-launcher.ps1"
@@ -184,7 +206,7 @@ New-LauncherScript -Path $djangoLauncher -WorkingDirectory $djangoDir -EnvVars @
 $pids["django"] = (Start-LauncherProcess -LauncherPath $djangoLauncher).Id
 Write-ColorOutput "  [OK] Django PID=$($pids['django'])" "Green"
 
-Write-ColorOutput "[Step 6/6] Start React :$ReactPort ..." "Yellow"
+Write-ColorOutput "[Step 7/7] Start React :$ReactPort ..." "Yellow"
 Kill-ProcessOnPort -Port $ReactPort | Out-Null
 Kill-ProcessOnPort -Port 3001 | Out-Null
 Kill-ProcessOnPort -Port 3002 | Out-Null
@@ -229,6 +251,7 @@ Write-ColorOutput "============================================================"
 Write-ColorOutput "  React:   http://localhost:$ReactPort/chat  $(if ($reactOk) {'[OK]'} else {'[WAIT]'})" "Gray"
 Write-ColorOutput "  Django:  http://localhost:$DjangoPort/api/health/  $(if ($bffOk) {'[OK]'} else {'[WAIT]'})" "Gray"
 Write-ColorOutput "  FastAPI: http://localhost:$FastAPIPort/health  $(if ($apiOk) {'[OK]'} else {'[WAIT]'})" "Gray"
+Write-ColorOutput "  Celery:  see $logDir\celery.log (required for firewall/backup/patrol Skills)" "Gray"
 Write-ColorOutput "  Logs:    $logDir" "Gray"
 Write-ColorOutput "" "Cyan"
 Write-ColorOutput "Tip: scripts\test\stop.ps1 to stop" "Yellow"

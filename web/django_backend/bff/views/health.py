@@ -25,3 +25,18 @@ async def _proxy_health_async(request: HttpRequest) -> JsonResponse:
 def proxy_health(request: HttpRequest) -> JsonResponse:
     """同步入口，兼容 Daphne + 同步中间件链。"""
     return async_to_sync(_proxy_health_async)(request)
+
+
+async def _proxy_health_diagnostics_async(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path="/health/diagnostics",
+        request_id=request.bff_request_id,
+        timeout=HEALTH_TIMEOUT,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+def proxy_health_diagnostics(request: HttpRequest) -> JsonResponse:
+    return async_to_sync(_proxy_health_diagnostics_async)(request)

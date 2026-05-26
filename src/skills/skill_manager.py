@@ -26,7 +26,7 @@ class SkillManager:
 
     def list_all_skills(self) -> list[dict[str, Any]]:
         """
-        获取所有 Skill 列表
+        获取所有 Skill 列表（仅 SKILL.md 文件型 Skill，与 SkillSystem 扫描范围一致）
 
         Returns:
             List[Dict]: Skill 信息列表
@@ -35,18 +35,22 @@ class SkillManager:
             from src.skills.registry import skill_registry
 
             skills = []
-            for skill in skill_registry.list_skills():
-                metadata = skill_registry.get_metadata(skill.name)
+            for item in self.list_file_skills():
+                name = item["name"]
+                reg_skill = skill_registry.get_skill(name)
                 skills.append({
-                    "name": skill.name,
-                    "description": skill.description,
-                    "category": skill.category,
-                    "tags": skill.tags,
-                    "enabled": skill.enabled,
-                    "version": metadata.version if metadata else "1.0.0",
-                    "fallback_to_rag": skill.fallback_to_rag_if_fail
+                    "name": name,
+                    "description": item.get("description", ""),
+                    "category": item.get("category", "general"),
+                    "tags": item.get("tags", []),
+                    "enabled": reg_skill.enabled if reg_skill else item.get("enabled", True),
+                    "version": item.get("version", "1.0.0"),
+                    "fallback_to_rag": (
+                        reg_skill.fallback_to_rag_if_fail
+                        if reg_skill
+                        else item.get("fallback_to_rag", True)
+                    ),
                 })
-
             return skills
 
         except Exception as e:
@@ -87,6 +91,8 @@ class SkillManager:
                     "category": metadata.get("category", "general"),
                     "tags": metadata.get("tags", []),
                     "version": metadata.get("version", "1.0.0"),
+                    "enabled": metadata.get("enabled", True),
+                    "fallback_to_rag": metadata.get("fallback_to_rag", True),
                     "skill_path": str(item),
                     "skill_md_path": str(skill_md)
                 })
@@ -97,21 +103,44 @@ class SkillManager:
         return skills
 
     def _parse_skill_md_content(self, content: str) -> dict[str, Any]:
-        """解析 SKILL.md 内容"""
-        import re
+        """解析 SKILL.md frontmatter（与 skill_system.metadata 对齐）。"""
+        from src.skill_system.metadata import parse_frontmatter
 
-        # 匹配 frontmatter
-        pattern = r'^---\s*\n(.*?)\n---\s*\n'
-        match = re.match(pattern, content, re.DOTALL)
+        frontmatter, _ = parse_frontmatter(content)
+        return frontmatter if isinstance(frontmatter, dict) else {}
 
-        if match:
-            yaml_str = match.group(1)
-            try:
-                return yaml.safe_load(yaml_str) or {}
-            except yaml.YAMLError:
-                return {}
+    def _find_skill_md_path(self, skill_name: str) -> Path | None:
+        direct = self._skills_dir / skill_name / "SKILL.md"
+        if direct.exists():
+            return direct
+        for item in self._skills_dir.iterdir():
+            if not item.is_dir() or item.name.startswith(".") or item.name == "examples":
+                continue
+            skill_md = item / "SKILL.md"
+            if not skill_md.exists():
+                continue
+            meta = self._parse_skill_md_content(skill_md.read_text(encoding="utf-8"))
+            if meta.get("name") == skill_name:
+                return skill_md
+        return None
 
-        return {}
+    def _set_skill_md_enabled(self, skill_name: str, enabled: bool) -> bool:
+        skill_md = self._find_skill_md_path(skill_name)
+        if not skill_md:
+            return False
+        from src.skill_system.metadata import normalize_markdown_content, parse_frontmatter
+
+        text = normalize_markdown_content(skill_md.read_text(encoding="utf-8"))
+        frontmatter, body = parse_frontmatter(text)
+        frontmatter["enabled"] = enabled
+        yaml_block = yaml.dump(
+            frontmatter,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        ).strip()
+        skill_md.write_text(f"---\n{yaml_block}\n---\n\n{body.lstrip()}", encoding="utf-8")
+        return True
 
     def create_skill(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -245,6 +274,15 @@ class SkillManager:
                 return {"success": False, "message": f"Skill '{skill_name}' 不存在"}
 
             skill.enabled = enabled
+            if not self._set_skill_md_enabled(skill_name, enabled):
+                logger.warning("未能写入 SKILL.md enabled 字段: %s", skill_name)
+
+            from src.skills.bootstrap import bootstrap_skills
+
+            bootstrap_skills(force=True)
+            from src.skill_system import get_skill_system
+
+            get_skill_system().reload_skill(skill_name)
 
             status = "启用" if enabled else "禁用"
             logger.info(f"{status} Skill: {skill_name}")
@@ -266,14 +304,12 @@ class SkillManager:
             Dict: {"success": bool, "message": str}
         """
         try:
-            from src.skill_system import reload_all_skills
-            from src.skills.registry import skill_registry
+            from src.skills.bootstrap import bootstrap_skills
 
-            # 重新扫描文件
-            skill_registry.discover_skills_from_files()
+            bootstrap_skills(force=True)
+            from src.skill_system import get_skill_system
 
-            # 重新加载 Skill System
-            reload_all_skills()
+            get_skill_system().reload_skill(skill_name)
 
             logger.info(f"热加载 Skill: {skill_name}")
 
@@ -291,14 +327,9 @@ class SkillManager:
             Dict: {"success": bool, "message": str, "count": int}
         """
         try:
-            from src.skill_system import reload_all_skills
-            from src.skills.registry import skill_registry
+            from src.skills.bootstrap import bootstrap_skills
 
-            # 重新扫描
-            count = skill_registry.discover_skills_from_files()
-
-            # 重新加载
-            reload_all_skills()
+            count = bootstrap_skills(force=True)
 
             logger.info(f"重新加载了 {count} 个 Skill")
 

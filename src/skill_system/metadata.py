@@ -6,12 +6,15 @@ Skill 元数据解析模块
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class InputSpec(BaseModel):
@@ -111,6 +114,11 @@ class SkillMetadata(BaseModel):
         return self.model_dump()
 
 
+def normalize_markdown_content(content: str) -> str:
+    """统一换行符，避免 Windows CRLF 导致 frontmatter 解析失败。"""
+    return content.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     """
     解析 YAML frontmatter
@@ -121,25 +129,33 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     Returns:
         Tuple[Dict, str]: (frontmatter 字典, 正文内容)
     """
-    # 匹配 --- 包围的 frontmatter
-    pattern = r'^---\s*\n(.*?)\n---\s*\n(.*)$'
-    match = re.match(pattern, content, re.DOTALL)
+    text = normalize_markdown_content(content)
 
+    # 标准：首尾 --- 块
+    pattern = r"^---\s*\n(.*?)\n---\s*\n(.*)$"
+    match = re.match(pattern, text, re.DOTALL)
     if match:
         frontmatter_yaml = match.group(1)
         body = match.group(2)
-
-        # 解析 YAML
         try:
             frontmatter = yaml.safe_load(frontmatter_yaml) or {}
         except yaml.YAMLError as e:
-            print(f"[WARN] YAML 解析失败: {e}")
+            logger.warning("YAML 解析失败: %s", e)
             frontmatter = {}
-
         return frontmatter, body
-    else:
-        # 没有 frontmatter，整个内容作为指令
-        return {}, content
+
+    # 宽松：仅开头有 ---，尝试找到第二个 ---
+    loose = re.match(r"^---\s*\n(.*?)\n---\s*\n?", text, re.DOTALL)
+    if loose:
+        yaml_part = loose.group(1)
+        body = text[loose.end() :]
+        try:
+            frontmatter = yaml.safe_load(yaml_part) or {}
+        except yaml.YAMLError:
+            frontmatter = {}
+        return frontmatter, body
+
+    return {}, text
 
 
 def parse_skill_md(file_path: Path, include_instructions: bool = True) -> SkillMetadata:
@@ -155,7 +171,7 @@ def parse_skill_md(file_path: Path, include_instructions: bool = True) -> SkillM
     if not file_path.exists():
         raise FileNotFoundError(f"SKILL.md 不存在: {file_path}")
 
-    content = file_path.read_text(encoding='utf-8')
+    content = normalize_markdown_content(file_path.read_text(encoding="utf-8"))
 
     # 解析 frontmatter
     frontmatter, body = parse_frontmatter(content)

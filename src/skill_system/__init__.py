@@ -87,11 +87,18 @@ class SkillSystem:
         # 加载所有 Skill 元数据
         self.loader.scan_skill_dirs(skill_dirs)
 
-        # 始终初始化 SemanticRouter（关键词 + 可选 embedding/LLM Judge）
+        import os
+
+        use_llm_judge = os.getenv("USE_SKILL_LLM_JUDGE", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         self.router = SemanticRouter(
             rag_service=rag_service,
             skill_loader=self.loader,
             use_embedding=rag_service is not None,
+            use_llm_judge=use_llm_judge,
         )
 
         self._initialized = True
@@ -187,12 +194,33 @@ class SkillSystem:
         if self.router:
             self.router.invalidate_cache()
 
-    def reload_all(self):
-        """重新加载所有 Skill"""
+    def reload_all(self, skill_dirs: list | None = None, rag_service=None):
+        """重新加载所有 Skill（元数据 + 路由 + 内容缓存）"""
+        dirs = skill_dirs or self._skill_dirs
+        if not dirs:
+            from pathlib import Path
+
+            base_dir = Path(__file__).parent.parent.parent
+            dirs = [str(base_dir / "src" / "skills")]
+
+        self._skill_dirs = list(dirs)
         self.loader.invalidate_cache()
-        self.loader.scan_skill_dirs(self._skill_dirs)
-        if self.router:
-            self.router.invalidate_cache()
+        self.cache.clear_all()
+        self.loader.scan_skill_dirs(dirs)
+        import os
+
+        use_llm_judge = os.getenv("USE_SKILL_LLM_JUDGE", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self.router = SemanticRouter(
+            rag_service=rag_service,
+            skill_loader=self.loader,
+            use_embedding=rag_service is not None,
+            use_llm_judge=use_llm_judge,
+        )
+        self._initialized = True
 
 
 def get_skill_system() -> SkillSystem:
@@ -206,14 +234,20 @@ def get_skill_system() -> SkillSystem:
 
     if _skill_system is None:
         _skill_system = SkillSystem()
+
+    if not _skill_system._initialized:
         _skill_system.initialize()
 
     return _skill_system
 
 
 # 便捷函数
-def reload_all_skills():
-    """重新加载所有 Skill"""
-    global _skill_system
-    if _skill_system:
-        _skill_system.initialize()
+def reload_all_skills(rag_service=None, skill_dirs: list | None = None):
+    """重新加载所有 Skill（委托统一 bootstrap）"""
+    from src.skills.bootstrap import bootstrap_skills
+
+    return bootstrap_skills(
+        rag_service=rag_service,
+        skill_dirs=skill_dirs,
+        force=True,
+    )

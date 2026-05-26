@@ -10,6 +10,9 @@ Supervisor v2 — 高级协同模式
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+import re
 import time
 from typing import Annotated, Any, Literal, TypedDict
 
@@ -29,19 +32,16 @@ from src.common.metrics import increment_counter, observe_histogram
 from src.infrastructure.db.postgres import get_postgres_saver
 from src.skill_system import get_skill_system
 from src.skill_system.router import SkillMatch
-from src.skills.loader import load_all_skills
 from src.skills.registry import skill_registry
 from src.skills.skill_base import SkillDecision, SkillResult
 
 settings = get_settings()
-
-try:
-    load_all_skills()
-except Exception as exc:
-    print(f"[WARN] Skill 加载失败，v2 将以基础 RAG 模式运行: {exc}")
+logger = logging.getLogger(__name__)
 
 AgentType = Literal["supervisor", "skill_executor", "knowledge_qa", "end"]
 PRE_PROCESS_TOP_K = 5
+# 语义路由低于此阈值不加载 Skill（避免知识问句误匹配 device-backup 等）
+SEMANTIC_SKILL_MIN_CONFIDENCE = float(os.getenv("SEMANTIC_SKILL_MIN_CONFIDENCE", "0.72"))
 
 llm = ChatDeepSeek(
     model=settings.LLM_MODEL,
@@ -54,7 +54,13 @@ llm_with_execution_plan = llm.with_structured_output(
 )
 
 
+# 新一轮用户消息时由 pre_process_node 写入，用于清空 checkpoint 中的 intermediate_results
+INTERMEDIATE_RESULTS_RESET: dict[str, Any] = {"__reset_intermediate_results__": True}
+
+
 def _merge_dicts(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(right, dict) and right.get("__reset_intermediate_results__"):
+        return {}
     merged = dict(left or {})
     if right:
         merged.update(right)
@@ -96,6 +102,135 @@ def _route_skills(query: str, top_k: int = PRE_PROCESS_TOP_K) -> list[SkillMatch
     if skill_system.router:
         return skill_system.router.route(query, top_k=top_k)
     return skill_system.route(query, top_k=top_k)
+
+
+def _extract_ticket_id(query: str) -> str | None:
+    """从用户话术中提取工单号。"""
+    patterns = [
+        r"工单号[：:\s]+([A-Za-z0-9_-]+)",
+        r"ticket[_\s-]?id[：:\s]+([A-Za-z0-9_-]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, query, re.IGNORECASE)
+        if match:
+            return match.group(1).strip("，。,. ")
+    return None
+
+
+def _has_trigger_match(skill_matches: list[SkillMatch], loaded_skills: list[str]) -> bool:
+    loaded = set(loaded_skills)
+    return any(
+        m.skill_name in loaded
+        and m.match_type == "trigger"
+        and m.confidence >= 0.85
+        for m in skill_matches
+    )
+
+
+def _is_knowledge_question(query: str) -> bool:
+    """
+    判断是否为知识库/方法论类问句（应走 RAG，而非低置信 Skill）。
+    含明确运维动作触发词时返回 False。
+    """
+    q = query.strip()
+    operational_patterns = [
+        r"生成防火墙",
+        r"防火墙策略",
+        r"备份.{0,8}配置",
+        r"配置备份",
+        r"设备备份",
+        r"执行.{0,6}巡检",
+        r"设备巡检",
+        r"工单号",
+        r"ticket[_\s-]?id",
+        r"下发",
+        r"生成.{0,6}策略",
+    ]
+    if any(re.search(p, q, re.IGNORECASE) for p in operational_patterns):
+        return False
+
+    knowledge_patterns = [
+        r"怎么办",
+        r"如何做",
+        r"怎么做",
+        r"如何",
+        r"什么是",
+        r"为什么",
+        r"为啥",
+        r"原理",
+        r"步骤",
+        r"排查",
+        r"故障",
+        r"标准操作",
+        r"SOP",
+        r"是什么意思",
+        r"介绍",
+        r"讲解",
+        r"处理方法",
+        r"处理流程",
+    ]
+    return any(re.search(p, q, re.IGNORECASE) for p in knowledge_patterns)
+
+
+def _is_actionable_skill_match(match: SkillMatch) -> bool:
+    """是否值得加载/执行该 Skill 匹配。"""
+    if match.match_type == "trigger":
+        return match.confidence >= 0.85
+    if match.match_type == "tag":
+        return match.confidence >= 0.75
+    if match.match_type == "semantic":
+        return match.confidence >= SEMANTIC_SKILL_MIN_CONFIDENCE
+    return match.confidence >= 0.85
+
+
+def _filter_skill_matches(query: str, matches: list[SkillMatch]) -> list[SkillMatch]:
+    """过滤低置信语义匹配；知识类问句在无触发词时不保留 Skill。"""
+    filtered = [m for m in matches if _is_actionable_skill_match(m)]
+    if _is_knowledge_question(query) and not any(
+        m.match_type == "trigger" and m.confidence >= 0.85 for m in filtered
+    ):
+        return []
+    return filtered
+
+
+def _build_heuristic_execution_plan(
+    query: str,
+    loaded_skills: list[str],
+    skill_matches: list[SkillMatch] | None,
+    uploaded_file_path: str | None,
+) -> ExecutionPlan | None:
+    """
+    不调用 LLM 的规则化 ExecutionPlan（触发词已匹配时使用）。
+    避免 API 余额不足时误走 RAG。
+    """
+    if not loaded_skills:
+        return None
+
+    matches_by_name = {m.skill_name: m for m in (skill_matches or [])}
+    primary = None
+    for name in loaded_skills:
+        match = matches_by_name.get(name)
+        if match and match.match_type == "trigger":
+            primary = name
+            break
+    if not primary:
+        return None
+
+    params: dict[str, Any] = {}
+    ticket_id = _extract_ticket_id(query)
+    if ticket_id:
+        params["ticket_id"] = ticket_id
+    if uploaded_file_path:
+        params["policy_file_url"] = uploaded_file_path
+
+    match = matches_by_name.get(primary)
+    reason = match.reason if match else "已加载 Skill 指令"
+    return ExecutionPlan(
+        reasoning=f"规则调度（免 LLM）: {reason}",
+        skills=[SkillTaskSpec(skill_name=primary, parameters=params)],
+        execution_mode="parallel",
+        fallback_to_rag=False,
+    )
 
 
 def _merge_params_with_deps(
@@ -174,30 +309,53 @@ def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
     """SemanticRouter 多匹配 + SkillLoader 批量加载（Progressive Disclosure）。"""
     t_start = time.time()
     query = _get_query(state)
-    print(f"\n[Supervisor v2] pre_process_node | query: {query[:80]}...")
+    print(f"\n[Supervisor v2] pre_process_node | query: {query[:80]}...", flush=True)
 
-    matches = _route_skills(query, top_k=PRE_PROCESS_TOP_K)
+    raw_matches = _route_skills(query, top_k=PRE_PROCESS_TOP_K)
+    matches = _filter_skill_matches(query, raw_matches)
+    if len(matches) < len(raw_matches):
+        print(
+            f"   pre_process 过滤弱匹配 {len(raw_matches)} → {len(matches)} "
+            f"(知识问句或语义低于 {SEMANTIC_SKILL_MIN_CONFIDENCE})"
+        )
     skill_system = get_skill_system()
     skill_instructions: dict[str, str] = {}
     loaded_skills: list[str] = []
 
     for match in matches:
-        content = skill_system.get_skill_instructions(match.skill_name)
-        if content:
-            skill_instructions[match.skill_name] = content
-            loaded_skills.append(match.skill_name)
+        try:
+            content = (skill_system.get_skill_instructions(match.skill_name) or "").strip()
+            if content:
+                skill_instructions[match.skill_name] = content
+                loaded_skills.append(match.skill_name)
+            else:
+                logger.warning(
+                    "pre_process: Skill %s 指令为空 (match=%s)",
+                    match.skill_name,
+                    match.match_type,
+                )
+        except Exception as exc:
+            logger.exception(
+                "pre_process: 加载 Skill %s 失败: %s",
+                match.skill_name,
+                exc,
+            )
 
     duration_ms = (time.time() - t_start) * 1000
     observe_histogram("supervisor_v2_pre_process_duration_ms", duration_ms)
     increment_counter("supervisor_v2_pre_process_total", tags={"loaded_count": str(len(loaded_skills))})
-    print(f"   pre_process_node 批量加载 {len(loaded_skills)} 个 Skill，耗时 {duration_ms:.0f}ms")
+    print(
+        f"   pre_process_node 匹配 {len(matches)} 个 / 加载 {len(loaded_skills)} 个 Skill，"
+        f"耗时 {duration_ms:.0f}ms"
+    )
 
     return {
         **state,
         "skill_matches": matches,
         "skill_instructions": skill_instructions,
         "loaded_skills": loaded_skills,
-        "intermediate_results": state.get("intermediate_results") or {},
+        # 每轮对话清空 Skill 执行结果，避免复用同 thread checkpoint 中的旧失败/成功记录
+        "intermediate_results": INTERMEDIATE_RESULTS_RESET,
     }
 
 
@@ -221,6 +379,29 @@ def supervisor_node_v2(state: SupervisorStateV2) -> SupervisorStateV2:
         increment_counter("supervisor_v2_plan_total", tags={"result": "rag_fallback"})
         observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
         return {**state, "execution_plan": plan, "fallback_to_rag": True, "next_agent": "knowledge_qa"}
+
+    skill_matches = state.get("skill_matches") or []
+    heuristic_plan = _build_heuristic_execution_plan(
+        query, loaded_skills, skill_matches, uploaded_file_path
+    )
+    # 仅触发词命中时用规则调度；低置信语义匹配改走 RAG / LLM 规划
+    use_rule_plan = heuristic_plan is not None and _has_trigger_match(
+        skill_matches, loaded_skills
+    )
+
+    if use_rule_plan:
+        print(
+            f"   ExecutionPlan: 规则调度 → {heuristic_plan.skills[0].skill_name} "
+            f"params={heuristic_plan.skills[0].parameters}"
+        )
+        increment_counter("supervisor_v2_plan_total", tags={"result": "rule_plan"})
+        observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
+        return {
+            **state,
+            "execution_plan": heuristic_plan,
+            "fallback_to_rag": False,
+            "next_agent": "skill_executor",
+        }
 
     skills_block = []
     for name in loaded_skills:
@@ -255,12 +436,17 @@ reasoning、skills（skill_name/parameters/depends_on）、execution_mode、cond
         plan = ExecutionPlan.from_model(plan_model)
         print(f"   ExecutionPlan: mode={plan.execution_mode}, skills={[s.skill_name for s in plan.skills]}")
     except Exception as exc:
-        print(f"   ExecutionPlan LLM 失败，走 RAG: {exc}")
-        plan = ExecutionPlan(
-            reasoning=f"LLM 决策失败: {str(exc)[:80]}",
-            skills=[],
-            fallback_to_rag=True,
-        )
+        print(f"   ExecutionPlan LLM 失败: {exc}")
+        if heuristic_plan and heuristic_plan.skills:
+            plan = heuristic_plan
+            plan.reasoning = f"{plan.reasoning}（LLM 不可用: {str(exc)[:80]}）"
+            print(f"   回退规则调度 → {plan.skills[0].skill_name}")
+        else:
+            plan = ExecutionPlan(
+                reasoning=f"LLM 决策失败: {str(exc)[:80]}",
+                skills=[],
+                fallback_to_rag=True,
+            )
 
     tag = "skill_plan" if plan.skills and not plan.fallback_to_rag else "rag_fallback"
     increment_counter("supervisor_v2_plan_total", tags={"result": tag})
@@ -294,6 +480,10 @@ def orchestrator_dispatch(state: SupervisorStateV2):
     if plan.execution_mode == "parallel":
         pending = [t for t in tasks if t.skill_name not in completed]
         if not pending:
+            print(
+                f"[Supervisor v2] orchestrator: Skill 已在 intermediate_results 中 {completed}，"
+                "跳过 fan-out（若为本轮新消息仍出现，请确认 pre_process 已清空 checkpoint）"
+            )
             return "final_aggregator"
         print(f"[Supervisor v2] orchestrator fan-out 并行执行 {len(pending)} 个 Skill")
         increment_counter("supervisor_v2_orchestrator_fanout_total", tags={"mode": "parallel", "count": str(len(pending))})
@@ -335,8 +525,8 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
         print("[Supervisor v2] skill_executor_v2: 无决策，跳过")
         return state
 
-    print(f"\n[Supervisor v2] skill_executor_v2 | Skill: {skill_name}")
-    print(f"               Parameters: {decision.parameters}")
+    print(f"\n[Supervisor v2] skill_executor_v2 | Skill: {skill_name}", flush=True)
+    print(f"               Parameters: {decision.parameters}", flush=True)
 
     try:
         from src.skill_system.security import get_security_manager
@@ -402,7 +592,8 @@ def final_aggregator_node(state: SupervisorStateV2) -> SupervisorStateV2:
         lines.append(f"- 状态: {status}")
         lines.append(f"- 结果: {result.get('message', '')}")
         if result.get("download_url"):
-            lines.append(f"- 下载: {result['download_url']}")
+            url = result["download_url"]
+            lines.append(f"- 下载: {url}")
         if result.get("error"):
             lines.append(f"- 错误: {result['error']}")
         lines.append("")
@@ -422,15 +613,30 @@ def final_aggregator_node(state: SupervisorStateV2) -> SupervisorStateV2:
     }
 
 
+def _format_rag_failure_message(exc: Exception) -> str:
+    msg = str(exc)
+    if "402" in msg or "Insufficient Balance" in msg:
+        return (
+            "**无法完成回答**：大模型 API 账户余额不足（HTTP 402）。\n\n"
+            "本次请求已尝试走知识库（RAG）兜底，但生成回答同样需要调用 LLM。\n\n"
+            "**建议**：\n"
+            "1. 为 DeepSeek（或当前配置的 LLM）充值后重试；\n"
+            "2. 运维类指令（如「生成防火墙策略」）在余额恢复后应自动匹配 Skill 执行，无需 RAG；\n"
+            "3. 若仅需执行 Skill，请确认 `USE_SUPERVISOR_V2=true` 且服务已重启。\n"
+        )
+    return f"[FAIL] RAG 查询失败: {msg}"
+
+
 def knowledge_qa_node_wrapper_v2(state: SupervisorStateV2) -> SupervisorStateV2:
     print("\n[Supervisor v2] knowledge_qa_node")
     try:
         result = knowledge_qa_node(state)
         return {**state, **result, "next_agent": "end", "agent_type": "knowledge_qa"}
     except Exception as exc:
+        logger.exception("knowledge_qa 失败")
         return {
             **state,
-            "messages": state["messages"] + [AIMessage(content=f"[FAIL] RAG 查询失败: {exc}")],
+            "messages": state["messages"] + [AIMessage(content=_format_rag_failure_message(exc))],
             "next_agent": "end",
         }
 

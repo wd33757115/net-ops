@@ -7,6 +7,7 @@ import logging
 import os
 import pkgutil
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -510,7 +511,12 @@ class SkillRegistry:
             )
 
         if not hasattr(skill.handler, 'delay') and not hasattr(skill.handler, 'apply_async'):
-            task_name = self._resolve_celery_task(skill.name, getattr(skill, '_metadata', None))
+            meta = None
+            if hasattr(skill, "get_skill_metadata"):
+                meta = skill.get_skill_metadata()
+            else:
+                meta = getattr(skill, "_metadata", None)
+            task_name = self._resolve_celery_task(skill.name, meta)
             if task_name:
                 try:
                     from src.core.celery_tasks import tasks
@@ -857,20 +863,54 @@ class SkillRegistry:
 
         return params
 
-    def discover_skills_from_files(self, skill_dirs: list[str] = None) -> int:
-        """
-        从文件系统扫描 SKILL.md 文件，发现并注册 Skill
+    def _refresh_file_skill_from_metadata(self, metadata) -> None:
+        """热更新已注册的文件型 Skill 元数据。"""
+        from src.skills.file_based_skill import FileBasedSkill
 
-        支持 Grok-style 文件驱动 Skill 架构。
+        skill = self._skills.get(metadata.name)
+        if not skill:
+            return
+        skill.enabled = metadata.enabled
+        skill.description = metadata.description
+        skill.category = metadata.category
+        skill.tags = list(metadata.tags or [])
+        skill.fallback_to_rag_if_fail = metadata.fallback_to_rag
+        if isinstance(skill, FileBasedSkill):
+            skill.refresh_metadata(metadata)
+        self._metadata_cache[metadata.name] = metadata
+
+    def discover_skills_from_files(self, skill_dirs: list[str] = None) -> int:
+        """兼容别名：委托 sync_skills_from_files。"""
+        return self.sync_skills_from_files(skill_dirs)
+
+    def _is_current_file_based_skill(self, skill) -> bool:
+        from src.skills.file_based_skill import FileBasedSkill
+
+        if not isinstance(skill, FileBasedSkill) or not callable(getattr(skill, "get_skill_metadata", None)):
+            return False
+        try:
+            return skill.get_skill_metadata() is not None
+        except AttributeError:
+            return False
+
+    def _register_file_based_skill(self, metadata) -> None:
+        from src.skill_system.metadata import SkillMetadata as SysSkillMetadata
+        from src.skills.file_based_skill import FileBasedSkill
+
+        skill = FileBasedSkill(metadata)
+        self.register_skill(skill, SysSkillMetadata(**metadata.model_dump()))
+
+    def sync_skills_from_files(self, skill_dirs: list[str] = None, *, force_replace: bool = False) -> int:
+        """
+        从文件系统扫描 SKILL.md，注册或热更新 Skill。
 
         Args:
             skill_dirs: Skill 目录列表，默认为 ['src/skills']
 
         Returns:
-            int: 发现并注册的 Skill 数量
+            int: 同步的 Skill 数量
         """
         if skill_dirs is None:
-            from pathlib import Path
             base_dir = Path(__file__).parent.parent.parent
             skill_dirs = [str(base_dir / "src" / "skills")]
 
@@ -901,191 +941,30 @@ class SkillRegistry:
 
                     metadata = parse_skill_md(skill_md, include_instructions=False)
 
-                    # 检查是否已注册
-                    if metadata.name in self._skills:
-                        logger.info(f"Skill {metadata.name} 已存在，跳过")
+                    # 与其他已注册 Skill 同义（连字符/下划线）则跳过，避免 device-backup vs device_backup 双注册
+                    norm = metadata.name.replace("-", "_").lower()
+                    if any(
+                        k != metadata.name and k.replace("-", "_").lower() == norm
+                        for k in self._skills
+                    ):
+                        logger.info(f"Skill {metadata.name} 已有同义注册，跳过")
                         continue
 
-                    # 创建包装 Skill
-                    from src.skills.skill_base import BaseSkill, SkillResult
-
-                    class FileBasedSkill(BaseSkill):
-                        """基于 SKILL.md 的 Skill"""
-
-                        def _dummy_handler(self, *args, **kwargs):
-                            """空的 handler，实际执行在 execute 方法中"""
-                            pass
-
-                        def __init__(self, skill_metadata):
-                            self._metadata = skill_metadata
-                            super().__init__(
-                                name=skill_metadata.name,
-                                description=skill_metadata.description,
-                                parameters=self._create_params_model(skill_metadata),
-                                handler=self._dummy_handler,
-                                category=skill_metadata.category,
-                                tags=skill_metadata.tags,
-                                fallback_to_rag_if_fail=skill_metadata.fallback_to_rag,
-                                enabled=skill_metadata.enabled
+                    if metadata.name in self._skills:
+                        existing = self._skills[metadata.name]
+                        if force_replace or not self._is_current_file_based_skill(existing):
+                            self._register_file_based_skill(metadata)
+                            logger.info(
+                                "替换 Skill 实例: %s (旧类=%s)",
+                                metadata.name,
+                                type(existing).__name__,
                             )
+                        else:
+                            self._refresh_file_skill_from_metadata(metadata)
+                        discovered_count += 1
+                        continue
 
-                        @staticmethod
-                        def _create_params_model(metadata):
-                            """动态创建参数模型"""
-                            from typing import Any, Optional
-
-                            from pydantic import BaseModel, Field
-
-                            # 构建 __annotations__ 字典
-                            annotations = {}
-                            field_definitions = {}
-
-                            for inp in metadata.inputs:
-                                # 处理类型
-                                if inp.type == "string":
-                                    field_type = Optional[str]
-                                elif inp.type == "integer" or inp.type == "int":
-                                    field_type = Optional[int]
-                                elif inp.type == "number" or inp.type == "float":
-                                    field_type = Optional[float]
-                                elif inp.type == "boolean" or inp.type == "bool":
-                                    field_type = Optional[bool]
-                                elif inp.type == "array" or inp.type == "list":
-                                    field_type = Optional[list[Any]]
-                                elif inp.type == "object" or inp.type == "dict":
-                                    field_type = Optional[dict[str, Any]]
-                                else:
-                                    field_type = Optional[Any]
-
-                                annotations[inp.name] = field_type
-
-                                # 创建 Field
-                                default_value = inp.default if inp.default is not None else None
-                                field_definitions[inp.name] = Field(default=default_value, description=inp.description)
-
-                            # 创建类型字典
-                            attrs = {}
-                            attrs.update(field_definitions)
-                            attrs['__annotations__'] = annotations
-
-                            if field_definitions:
-                                return type('SkillParams', (BaseModel,), attrs)
-                            else:
-                                return BaseModel
-
-                        async def execute(self, **kwargs) -> SkillResult:
-                            """执行 Skill"""
-                            try:
-                                # 三级自动解析 Celery 任务
-                                task_name = skill_registry._resolve_celery_task(self.name, self._metadata)
-
-                                if task_name:
-                                    # 有对应的 Celery Task，直接调用
-                                    return await self._execute_with_celery(task_name, kwargs)
-                                else:
-                                    # 没有 Celery Task，使用 LLM 执行
-                                    from src.skill_system import get_skill_system
-                                    skill_system = get_skill_system()
-                                    instructions = skill_system.get_skill_instructions(self.name)
-                                    return await self._execute_with_llm(instructions, kwargs)
-                            except Exception as e:
-                                logger.error(f"Skill {self.name} 执行失败: {e}")
-                                return SkillResult(
-                                    success=False,
-                                    message=f"Skill 执行失败: {str(e)}",
-                                    error=str(e)
-                                )
-
-                        async def _execute_with_celery(self, task_name: str, params: dict) -> SkillResult:
-                            """使用 Celery Task 执行 Skill"""
-                            from src.core.celery_tasks import tasks
-
-                            # 动态获取任务函数
-                            task_func = getattr(tasks, task_name, None)
-                            if not task_func:
-                                return SkillResult(
-                                    success=False,
-                                    message=f"找不到任务函数: {task_name}",
-                                    error=f"Task {task_name} not found"
-                                )
-
-                            # 对于防火墙策略，补充默认值
-                            if task_name == "execute_firewall_policy_task":
-                                import os
-                                BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-                                test_file = os.path.join(BASE_DIR, "tools", "firewall-policy", "test_policy.xlsx")
-
-                                if not params.get("policy_file_url") and os.path.exists(test_file):
-                                    params["policy_file_url"] = test_file
-
-                                if not params.get("ticket_id"):
-                                    params["ticket_id"] = f"POLICY_{params.get('thread_id', '000')}"
-
-                                if not params.get("ticket_title"):
-                                    params["ticket_title"] = "防火墙策略生成"
-
-                            # 提交任务并等待结果
-                            result = task_func.delay(**params)
-                            task_result = result.get(timeout=300)
-
-                            return SkillResult(**task_result)
-
-                        async def _execute_with_llm(self, instructions: str, params: dict) -> SkillResult:
-                            """使用 LLM 执行 Skill"""
-                            from langchain_deepseek import ChatDeepSeek
-
-                            from src.common.config import get_settings
-
-                            settings = get_settings()
-
-                            llm = ChatDeepSeek(
-                                model=settings.LLM_MODEL,
-                                api_key=settings.DEEPSEEK_API_KEY,
-                                temperature=0.3,
-                                request_timeout=60
-                            )
-
-                            prompt = f"""{instructions}
-
-用户参数：
-{json.dumps(params, ensure_ascii=False, indent=2)}
-
-请根据以上指令和参数，执行 Skill 并返回结果。
-
-返回格式：
-{{
-  "success": true/false,
-  "message": "结果描述",
-  "data": {{...}}
-}}
-"""
-
-                            try:
-                                response = await llm.ainvoke(prompt)
-                                content = response.content if hasattr(response, 'content') else str(response)
-
-                                # 尝试解析 JSON
-                                import re
-                                json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                                if json_match:
-                                    result = json.loads(json_match.group())
-                                    return SkillResult(**result)
-                                else:
-                                    return SkillResult(
-                                        success=True,
-                                        message="Skill 执行完成",
-                                        data={"raw_output": content}
-                                    )
-                            except Exception as e:
-                                return SkillResult(
-                                    success=False,
-                                    message=f"LLM 执行失败: {str(e)}",
-                                    error=str(e)
-                                )
-
-                    # 注册 Skill
-                    skill = FileBasedSkill(metadata)
-                    self.register_skill(skill, SkillMetadata(**metadata.model_dump()))
+                    self._register_file_based_skill(metadata)
                     discovered_count += 1
                     logger.info(f"从文件发现 Skill: {metadata.name} v{metadata.version}")
 

@@ -99,9 +99,16 @@ If no relevant info exists, say "知识库中暂无相关内容".
 Q: {query}
 A:"""
 
-            # LLM generation: typically 1-3s depending on DeepSeek API latency
             t_llm = time.time()
-            response = rag_llm.invoke(prompt)
+            try:
+                response = rag_llm.invoke(prompt)
+            except Exception as exc:
+                err = str(exc)
+                if "402" in err or "Insufficient Balance" in err:
+                    raise RuntimeError(
+                        "大模型 API 余额不足（402），无法基于知识库生成回答。请充值后重试。"
+                    ) from exc
+                raise
             print(f"   - LLM generation took {time.time()-t_llm:.1f}s")
 
             answer = response.content.strip()

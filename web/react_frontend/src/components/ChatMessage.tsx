@@ -1,8 +1,9 @@
 import React from 'react'
-import { Avatar, Typography, Tag, Button, Space } from 'antd'
-import { UserOutlined, RobotOutlined, DownloadOutlined } from '@ant-design/icons'
+import { Avatar, Typography, Tag } from 'antd'
+import { UserOutlined, RobotOutlined } from '@ant-design/icons'
+import { renderAssistantContent } from '../utils/linkify'
 
-const { Text, Paragraph } = Typography
+const { Paragraph } = Typography
 
 interface ChatMessageProps {
   role: 'user' | 'assistant'
@@ -11,84 +12,62 @@ interface ChatMessageProps {
   downloadUrl?: string
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ 
-  role, 
-  content, 
-  agentType, 
-  downloadUrl 
-}) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, agentType }) => {
   const isUser = role === 'user'
 
   return (
-    <div 
-      style={{ 
-        display: 'flex', 
+    <div
+      style={{
+        display: 'flex',
         justifyContent: isUser ? 'flex-end' : 'flex-start',
-        marginBottom: '24px'
+        marginBottom: '24px',
       }}
     >
       {!isUser && (
-        <Avatar 
-          icon={<RobotOutlined />} 
-          style={{ 
+        <Avatar
+          icon={<RobotOutlined />}
+          style={{
             backgroundColor: '#111827',
-            marginRight: '12px'
+            marginRight: '12px',
           }}
         />
       )}
 
-      <div style={{ 
-        maxWidth: '70%',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: isUser ? 'flex-end' : 'flex-start'
-      }}>
+      <div
+        style={{
+          maxWidth: '70%',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: isUser ? 'flex-end' : 'flex-start',
+        }}
+      >
         <div
           style={{
             background: isUser ? '#3b82f6' : '#f1f5f9',
             color: isUser ? '#fff' : '#111827',
             padding: '12px 16px',
             borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
           }}
         >
           <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-            {content}
+            {isUser ? content : renderAssistantContent(content)}
           </Paragraph>
         </div>
 
-        <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center' }}>
-          {agentType && !isUser && (
-            <Tag color="blue" style={{ fontSize: '12px' }}>
-              via {agentType}
-            </Tag>
-          )}
-          {downloadUrl && (
-            <Space style={{ marginLeft: '8px' }}>
-              <Tag color="success" style={{ fontSize: '12px' }}>
-                任务已完成
-              </Tag>
-              <Button 
-                type="link" 
-                size="small" 
-                icon={<DownloadOutlined />}
-                href={downloadUrl}
-                target="_blank"
-                style={{ padding: 0 }}
-              >
-                下载文件
-              </Button>
-            </Space>
-          )}
-        </div>
+        {agentType && !isUser && (
+          <Tag color="blue" style={{ fontSize: '12px', marginTop: 8 }}>
+            via {agentType}
+          </Tag>
+        )}
       </div>
 
       {isUser && (
-        <Avatar 
-          icon={<UserOutlined />} 
-          style={{ 
+        <Avatar
+          icon={<UserOutlined />}
+          style={{
             backgroundColor: '#6366f1',
-            marginLeft: '12px'
+            marginLeft: '12px',
           }}
         />
       )}

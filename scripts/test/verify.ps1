@@ -67,6 +67,18 @@ try {
     Assert-Ok "React JS bundle" $false $_.Exception.Message
 }
 
+$venvPython = Join-Path $ProjectRoot "venv\Scripts\python.exe"
+if (Test-Path $venvPython) {
+    $celeryPing = & $venvPython -c @"
+from src.core.celery_tasks.celery_exec import celery_workers_available
+import sys
+sys.exit(0 if celery_workers_available() else 1)
+"@ 2>$null
+    Assert-Ok "Celery Worker ping" ($LASTEXITCODE -eq 0) "(run scripts\test\start.ps1 or start worker manually)"
+} else {
+    Assert-Ok "Celery Worker ping" $false "venv not found"
+}
+
 Write-ColorOutput "" "Cyan"
 if ($failed) {
     Write-ColorOutput "Verification FAILED" "Red"

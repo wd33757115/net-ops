@@ -57,6 +57,24 @@ def _create_mock_loader():
     return loader
 
 
+def test_route_skips_embedding_when_trigger_hit(monkeypatch):
+    """触发词已命中时不应调用语义 Embedding（避免加载 BGE）。"""
+    loader = _create_mock_loader()
+    router = SemanticRouter(skill_loader=loader, use_embedding=True, use_llm_judge=False)
+
+    called = {"semantic": False}
+    original = router._semantic_match
+
+    def _spy_semantic(query, top_k):
+        called["semantic"] = True
+        return original(query, top_k)
+
+    monkeypatch.setattr(router, "_semantic_match", _spy_semantic)
+    matches = router.route("生成防火墙策略，工单号：rg001", top_k=3)
+    assert any(m.skill_name == "firewall-policy-generator" for m in matches)
+    assert called["semantic"] is False
+
+
 def test_keyword_match_trigger():
     """测试触发词匹配"""
     loader = _create_mock_loader()

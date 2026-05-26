@@ -14,16 +14,10 @@ from src.common.config import get_settings
 from src.common.metrics import increment_counter, observe_histogram
 from src.infrastructure.db.postgres import get_postgres_saver
 from src.skill_system import get_skill_system
-from src.skills.loader import load_all_skills
 from src.skills.registry import skill_registry
 from src.skills.skill_base import SkillDecision, SkillResult
 
 settings = get_settings()
-
-try:
-    load_all_skills()
-except Exception as e:
-    print(f"[WARN] Skill 加载失败，系统将以基础 RAG 模式运行: {e}")
 
 AgentType = Literal["supervisor", "skill_executor", "knowledge_qa", "end"]
 
