@@ -6,9 +6,9 @@ import { useLocation, useNavigate } from 'react-router-dom'
 const { Sider } = Layout
 
 const menuItems = [
-  { key: '/chat', icon: <MessageOutlined />, label: 'Chat' },
-  { key: '/skills', icon: <AppstoreOutlined />, label: 'Skills' },
-  { key: '/status', icon: <DashboardOutlined />, label: 'Status' },
+  { key: '/chat', icon: React.createElement(MessageOutlined), label: 'Chat' },
+  { key: '/skills', icon: React.createElement(AppstoreOutlined), label: 'Skills' },
+  { key: '/status', icon: React.createElement(DashboardOutlined), label: 'Status' },
 ]
 
 const AppSidebar: React.FC = () => {

@@ -4,6 +4,7 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from ..decorators import require_jwt
+from ..sync_async import sync_bff_view
 from ..proxy_client import proxy_to_fastapi
 from ..views._helpers import forward_client_headers, parse_json_body
 
@@ -12,6 +13,7 @@ logger = logging.getLogger("bff.views.skills")
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_skills_list(request: HttpRequest) -> JsonResponse:
     headers = forward_client_headers(request)
     if request.method == "GET":
@@ -33,6 +35,7 @@ async def proxy_skills_list(request: HttpRequest) -> JsonResponse:
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_skills_stats(request: HttpRequest) -> JsonResponse:
     return await proxy_to_fastapi(
         method="GET",
@@ -44,6 +47,7 @@ async def proxy_skills_stats(request: HttpRequest) -> JsonResponse:
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_reload_all_skills(request: HttpRequest) -> JsonResponse:
     return await proxy_to_fastapi(
         method="POST",
@@ -55,6 +59,7 @@ async def proxy_reload_all_skills(request: HttpRequest) -> JsonResponse:
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_skill_content(request: HttpRequest, skill_name: str) -> JsonResponse:
     headers = forward_client_headers(request)
     path = f"/api/v1/skills/{skill_name}/content"
@@ -77,6 +82,7 @@ async def proxy_skill_content(request: HttpRequest, skill_name: str) -> JsonResp
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_skill_files(request: HttpRequest, skill_name: str) -> JsonResponse:
     headers = forward_client_headers(request)
     path = f"/api/v1/skills/{skill_name}/files"
@@ -99,6 +105,7 @@ async def proxy_skill_files(request: HttpRequest, skill_name: str) -> JsonRespon
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_skill_toggle(request: HttpRequest, skill_name: str) -> JsonResponse:
     data = parse_json_body(request)
     return await proxy_to_fastapi(
@@ -112,6 +119,7 @@ async def proxy_skill_toggle(request: HttpRequest, skill_name: str) -> JsonRespo
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_skill_reload(request: HttpRequest, skill_name: str) -> JsonResponse:
     return await proxy_to_fastapi(
         method="POST",
@@ -123,6 +131,7 @@ async def proxy_skill_reload(request: HttpRequest, skill_name: str) -> JsonRespo
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_skill_detail(request: HttpRequest, skill_name: str) -> JsonResponse:
     headers = forward_client_headers(request)
     path = f"/api/v1/skills/{skill_name}"

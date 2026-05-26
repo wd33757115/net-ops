@@ -44,7 +44,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
 
-from src.agents.supervisor.graph import compiled_graph as get_supervisor_graph
+from src.agents.supervisor.graph import compiled_graph as get_supervisor_graph_v1
+from src.agents.supervisor.graph_v2 import compiled_graph_v2
+
+
+def get_supervisor_graph():
+    """按配置加载 v1 或 v2 Supervisor 图。"""
+    use_v2 = settings.USE_SUPERVISOR_V2 or os.getenv("USE_SUPERVISOR_V2", "").lower() in ("1", "true", "yes")
+    if use_v2:
+        print("[Gateway] 使用 Supervisor v2 高级协同模式")
+        return compiled_graph_v2()
+    print("[Gateway] 使用 Supervisor v1 单 Skill 模式")
+    return get_supervisor_graph_v1()
 from src.common.config import get_settings
 from src.core.rag_service.service import get_rag_service
 from src.gateway.bff_security import (

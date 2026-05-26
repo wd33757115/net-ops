@@ -1,0 +1,500 @@
+"""
+Supervisor v2 — 高级协同模式
+
+架构：pre_process → supervisor(ExecutionPlan) → orchestrator(Send fan-out)
+      → skill_executor_v2(Map) → final_aggregator(Reduce) → END
+
+与 v1 graph.py 并行存在，通过 USE_SUPERVISOR_V2 环境变量切换。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Annotated, Any, Literal, TypedDict
+
+from langchain_core.messages import AIMessage
+from langchain_deepseek import ChatDeepSeek
+from langgraph.graph import END, StateGraph
+from langgraph.types import Send
+
+from src.agents.knowledge_qa.agent import knowledge_qa_node
+from src.agents.supervisor.models_v2 import (
+    ExecutionPlan,
+    ExecutionPlanModel,
+    SkillTaskSpec,
+)
+from src.common.config import get_settings
+from src.common.metrics import increment_counter, observe_histogram
+from src.infrastructure.db.postgres import get_postgres_saver
+from src.skill_system import get_skill_system
+from src.skill_system.router import SkillMatch
+from src.skills.loader import load_all_skills
+from src.skills.registry import skill_registry
+from src.skills.skill_base import SkillDecision, SkillResult
+
+settings = get_settings()
+
+try:
+    load_all_skills()
+except Exception as exc:
+    print(f"[WARN] Skill 加载失败，v2 将以基础 RAG 模式运行: {exc}")
+
+AgentType = Literal["supervisor", "skill_executor", "knowledge_qa", "end"]
+PRE_PROCESS_TOP_K = 5
+
+llm = ChatDeepSeek(
+    model=settings.LLM_MODEL,
+    temperature=0.05,
+    api_key=settings.DEEPSEEK_API_KEY,
+    request_timeout=30,
+)
+llm_with_execution_plan = llm.with_structured_output(
+    ExecutionPlanModel, method="function_calling"
+)
+
+
+def _merge_dicts(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str, Any]:
+    merged = dict(left or {})
+    if right:
+        merged.update(right)
+    return merged
+
+
+class SupervisorStateV2(TypedDict):
+    messages: Annotated[list, "add_messages"]
+    next_agent: AgentType | None
+    context: str | None
+    source: str | None
+    task_id: str | None
+    celery_task_id: str | None
+    knowledge_references: list | None
+    uploaded_file_path: str | None
+    ticket_id: str | None
+    thread_id: str | None
+    metadata_filters: dict | None
+    skill_decision: SkillDecision | None
+    skill_result: SkillResult | None
+    fallback_to_rag: bool | None
+    async_mode: bool | None
+    agent_type: str | None
+    # v2 协同字段
+    skill_matches: list[SkillMatch] | None
+    skill_instructions: dict[str, str] | None
+    execution_plan: ExecutionPlan | None
+    intermediate_results: Annotated[dict[str, Any] | None, _merge_dicts]
+    loaded_skills: list[str] | None
+    current_skill_task: SkillTaskSpec | None
+
+
+def _get_query(state: SupervisorStateV2) -> str:
+    return state["messages"][-1].content
+
+
+def _route_skills(query: str, top_k: int = PRE_PROCESS_TOP_K) -> list[SkillMatch]:
+    skill_system = get_skill_system()
+    if skill_system.router:
+        return skill_system.router.route(query, top_k=top_k)
+    return skill_system.route(query, top_k=top_k)
+
+
+def _merge_params_with_deps(
+    task: SkillTaskSpec,
+    intermediate_results: dict[str, Any] | None,
+    uploaded_file_path: str | None,
+    ticket_id: str | None,
+) -> dict[str, Any]:
+    params = dict(task.parameters)
+    if intermediate_results:
+        for dep in task.depends_on:
+            dep_result = intermediate_results.get(dep)
+            if isinstance(dep_result, dict):
+                params.setdefault(f"{dep}_output", dep_result)
+                if dep_result.get("data"):
+                    params.setdefault("previous_data", dep_result["data"])
+    if uploaded_file_path:
+        params.setdefault("uploaded_file_path", uploaded_file_path)
+    if ticket_id:
+        params.setdefault("ticket_id", ticket_id)
+    return params
+
+
+def _deps_satisfied(task: SkillTaskSpec, completed: set[str]) -> bool:
+    return all(dep in completed for dep in task.depends_on)
+
+
+def _next_runnable_task(tasks: list[SkillTaskSpec], completed: set[str]) -> SkillTaskSpec | None:
+    for task in tasks:
+        if task.skill_name in completed:
+            continue
+        if _deps_satisfied(task, completed):
+            return task
+    return None
+
+
+def _filter_conditional_tasks(plan: ExecutionPlan, state: SupervisorStateV2) -> list[SkillTaskSpec]:
+    if plan.execution_mode != "conditional":
+        return list(plan.skills)
+    intermediate = state.get("intermediate_results") or {}
+    filtered: list[SkillTaskSpec] = []
+    for task in plan.skills:
+        condition_key = plan.conditions.get(task.skill_name)
+        if not condition_key:
+            filtered.append(task)
+            continue
+        for dep in task.depends_on:
+            dep_result = intermediate.get(dep)
+            if isinstance(dep_result, dict) and dep_result.get("success"):
+                filtered.append(task)
+                break
+    return filtered
+
+
+def _build_send_payload(state: SupervisorStateV2, task: SkillTaskSpec) -> dict[str, Any]:
+    plan = state.get("execution_plan")
+    reasoning = plan.reasoning if plan else "orchestrator dispatch"
+    params = _merge_params_with_deps(
+        task,
+        state.get("intermediate_results"),
+        state.get("uploaded_file_path"),
+        state.get("ticket_id") or "",
+    )
+    return {
+        "current_skill_task": task,
+        "skill_decision": SkillDecision(
+            reasoning=reasoning,
+            skill_name=task.skill_name,
+            parameters=params,
+            fallback_to_rag=False,
+        ),
+    }
+
+
+def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
+    """SemanticRouter 多匹配 + SkillLoader 批量加载（Progressive Disclosure）。"""
+    t_start = time.time()
+    query = _get_query(state)
+    print(f"\n[Supervisor v2] pre_process_node | query: {query[:80]}...")
+
+    matches = _route_skills(query, top_k=PRE_PROCESS_TOP_K)
+    skill_system = get_skill_system()
+    skill_instructions: dict[str, str] = {}
+    loaded_skills: list[str] = []
+
+    for match in matches:
+        content = skill_system.get_skill_instructions(match.skill_name)
+        if content:
+            skill_instructions[match.skill_name] = content
+            loaded_skills.append(match.skill_name)
+
+    duration_ms = (time.time() - t_start) * 1000
+    observe_histogram("supervisor_v2_pre_process_duration_ms", duration_ms)
+    increment_counter("supervisor_v2_pre_process_total", tags={"loaded_count": str(len(loaded_skills))})
+    print(f"   pre_process_node 批量加载 {len(loaded_skills)} 个 Skill，耗时 {duration_ms:.0f}ms")
+
+    return {
+        **state,
+        "skill_matches": matches,
+        "skill_instructions": skill_instructions,
+        "loaded_skills": loaded_skills,
+        "intermediate_results": state.get("intermediate_results") or {},
+    }
+
+
+def supervisor_node_v2(state: SupervisorStateV2) -> SupervisorStateV2:
+    """Supervisor 决策节点：仅输出 ExecutionPlan，不直接执行 Skill。"""
+    t_start = time.time()
+    query = _get_query(state)
+    uploaded_file_path = state.get("uploaded_file_path")
+    skill_instructions = state.get("skill_instructions") or {}
+    loaded_skills = state.get("loaded_skills") or []
+
+    print(f"\n[Supervisor v2] supervisor_node | 已加载 Skill: {loaded_skills}")
+
+    if not loaded_skills:
+        plan = ExecutionPlan(
+            reasoning="无匹配 Skill，走 RAG 兜底",
+            skills=[],
+            execution_mode="parallel",
+            fallback_to_rag=True,
+        )
+        increment_counter("supervisor_v2_plan_total", tags={"result": "rag_fallback"})
+        observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
+        return {**state, "execution_plan": plan, "fallback_to_rag": True, "next_agent": "knowledge_qa"}
+
+    skills_block = []
+    for name in loaded_skills:
+        instructions = skill_instructions.get(name, "")
+        skills_block.append(f"### Skill: {name}\n{instructions[:2000]}")
+
+    prompt = f"""你是 NetOps 多 Skill 协同调度器。根据用户请求，从已加载的 Skill 中制定 ExecutionPlan。
+
+【用户请求】
+{query}
+
+【上下文】
+- uploaded_file_path: {uploaded_file_path or '无'}
+
+【已加载 Skills 指令（Progressive Disclosure）】
+{chr(10).join(skills_block)}
+
+【任务】
+1. 知识性问题（概念/原理/方法论）→ skills=[] 且 fallback_to_rag=true
+2. 单 Skill 任务 → skills 仅含 1 项，execution_mode=parallel
+3. 多 Skill 可并行 → execution_mode=parallel，depends_on=[]
+4. 有先后顺序（A 结果供 B 使用）→ execution_mode=sequential，B.depends_on 含 A 的 skill_name
+5. 条件执行 → execution_mode=conditional，在 conditions 中描述触发条件
+6. 从用户话术中提取 parameters；不要编造文件路径
+
+【输出】
+reasoning、skills（skill_name/parameters/depends_on）、execution_mode、conditions、fallback_to_rag
+"""
+
+    try:
+        plan_model = llm_with_execution_plan.invoke(prompt)
+        plan = ExecutionPlan.from_model(plan_model)
+        print(f"   ExecutionPlan: mode={plan.execution_mode}, skills={[s.skill_name for s in plan.skills]}")
+    except Exception as exc:
+        print(f"   ExecutionPlan LLM 失败，走 RAG: {exc}")
+        plan = ExecutionPlan(
+            reasoning=f"LLM 决策失败: {str(exc)[:80]}",
+            skills=[],
+            fallback_to_rag=True,
+        )
+
+    tag = "skill_plan" if plan.skills and not plan.fallback_to_rag else "rag_fallback"
+    increment_counter("supervisor_v2_plan_total", tags={"result": tag})
+    observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
+
+    next_agent: AgentType = "knowledge_qa" if plan.fallback_to_rag or not plan.skills else "skill_executor"
+    return {
+        **state,
+        "execution_plan": plan,
+        "fallback_to_rag": plan.fallback_to_rag,
+        "next_agent": next_agent,
+    }
+
+
+def orchestrator_dispatch(state: SupervisorStateV2):
+    """
+    动态编排：parallel 多 Send fan-out；sequential/conditional 单 Send 或结束。
+    返回 Send 列表 / 节点名。
+    """
+    plan = state.get("execution_plan")
+    if not plan or plan.fallback_to_rag or not plan.skills:
+        return "knowledge_qa"
+
+    tasks = _filter_conditional_tasks(plan, state)
+    if not tasks:
+        print("[Supervisor v2] orchestrator: 无可执行任务 → final_aggregator")
+        return "final_aggregator"
+
+    completed = set((state.get("intermediate_results") or {}).keys())
+
+    if plan.execution_mode == "parallel":
+        pending = [t for t in tasks if t.skill_name not in completed]
+        if not pending:
+            return "final_aggregator"
+        print(f"[Supervisor v2] orchestrator fan-out 并行执行 {len(pending)} 个 Skill")
+        increment_counter("supervisor_v2_orchestrator_fanout_total", tags={"mode": "parallel", "count": str(len(pending))})
+        return [Send("skill_executor_v2", _build_send_payload(state, task)) for task in pending]
+
+    next_task = _next_runnable_task(
+        [t for t in tasks if t.skill_name not in completed],
+        completed,
+    )
+    if not next_task:
+        return "final_aggregator"
+
+    print(f"[Supervisor v2] orchestrator fan-out 顺序执行 Skill: {next_task.skill_name}")
+    increment_counter("supervisor_v2_orchestrator_fanout_total", tags={"mode": plan.execution_mode, "count": "1"})
+    return Send("skill_executor_v2", _build_send_payload(state, next_task))
+
+
+async def _execute_skill_decision(decision: SkillDecision, async_mode: bool) -> SkillResult:
+    if async_mode:
+        return skill_registry.submit_skill_task(decision)
+    try:
+        asyncio.get_running_loop()
+        import nest_asyncio
+
+        nest_asyncio.apply()
+        return await skill_registry.async_execute_skill(decision)
+    except RuntimeError:
+        return await skill_registry.async_execute_skill(decision)
+
+
+def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
+    """单 Skill 执行实例，读写 intermediate_results 共享上下文。"""
+    t_start = time.time()
+    decision = state.get("skill_decision")
+    task = state.get("current_skill_task")
+    skill_name = (task.skill_name if task else None) or (decision.skill_name if decision else None)
+
+    if not decision or not skill_name:
+        print("[Supervisor v2] skill_executor_v2: 无决策，跳过")
+        return state
+
+    print(f"\n[Supervisor v2] skill_executor_v2 | Skill: {skill_name}")
+    print(f"               Parameters: {decision.parameters}")
+
+    try:
+        from src.skill_system.security import get_security_manager
+
+        if not get_security_manager().check_permission(skill_name, "USER"):
+            print(f"[Supervisor v2] WARN: 权限不足 ({skill_name})，继续执行")
+    except Exception:
+        pass
+
+    try:
+        result = asyncio.run(_execute_skill_decision(decision, bool(state.get("async_mode"))))
+        payload = {
+            "success": result.success,
+            "message": result.message,
+            "data": result.data,
+            "download_url": result.download_url,
+            "error": result.error,
+            "execution_time_ms": result.execution_time_ms,
+        }
+        tag = "success" if result.success else "error"
+        increment_counter("supervisor_v2_skill_execution_total", tags={"result": tag, "skill": skill_name})
+        observe_histogram("supervisor_v2_skill_execution_duration_ms", (time.time() - t_start) * 1000)
+        print(f"[Supervisor v2] skill_executor_v2 完成: {skill_name} success={result.success}")
+
+        return {
+            "intermediate_results": {skill_name: payload},
+        }
+    except Exception as exc:
+        error_msg = f"技能执行异常: {exc}"
+        print(f"[Supervisor v2] skill_executor_v2 失败: {error_msg}")
+        increment_counter("supervisor_v2_skill_execution_total", tags={"result": "exception", "skill": skill_name or "unknown"})
+        return {
+            "intermediate_results": {skill_name: {"success": False, "message": error_msg, "error": error_msg}},
+        }
+
+
+def route_after_executor_v2(state: SupervisorStateV2) -> str:
+    plan = state.get("execution_plan")
+    if not plan or plan.execution_mode == "parallel":
+        return "final_aggregator"
+    completed = set((state.get("intermediate_results") or {}).keys())
+    tasks = _filter_conditional_tasks(plan, state)
+    pending = [t for t in tasks if t.skill_name not in completed]
+    if pending and _next_runnable_task(pending, completed):
+        return "orchestrator"
+    return "final_aggregator"
+
+
+def final_aggregator_node(state: SupervisorStateV2) -> SupervisorStateV2:
+    """Map-Reduce 聚合：合并所有 Skill 执行结果为用户可见回复。"""
+    results = state.get("intermediate_results") or {}
+    plan = state.get("execution_plan")
+    lines = ["[OK] 多 Skill 协同执行完成\n"]
+
+    if plan and plan.reasoning:
+        lines.append(f"**调度说明**: {plan.reasoning}\n")
+
+    for skill_name, result in results.items():
+        if not isinstance(result, dict):
+            continue
+        status = "成功" if result.get("success") else "失败"
+        lines.append(f"### {skill_name}")
+        lines.append(f"- 状态: {status}")
+        lines.append(f"- 结果: {result.get('message', '')}")
+        if result.get("download_url"):
+            lines.append(f"- 下载: {result['download_url']}")
+        if result.get("error"):
+            lines.append(f"- 错误: {result['error']}")
+        lines.append("")
+
+    if not results:
+        lines.append("未产生 Skill 执行结果。")
+
+    content = "\n".join(lines)
+    print(f"[Supervisor v2] final_aggregator | 聚合 {len(results)} 个 Skill 结果")
+
+    return {
+        **state,
+        "messages": state["messages"] + [AIMessage(content=content)],
+        "context": f"协同执行完成，共 {len(results)} 个 Skill",
+        "next_agent": "end",
+        "agent_type": "skill_executor",
+    }
+
+
+def knowledge_qa_node_wrapper_v2(state: SupervisorStateV2) -> SupervisorStateV2:
+    print("\n[Supervisor v2] knowledge_qa_node")
+    try:
+        result = knowledge_qa_node(state)
+        return {**state, **result, "next_agent": "end", "agent_type": "knowledge_qa"}
+    except Exception as exc:
+        return {
+            **state,
+            "messages": state["messages"] + [AIMessage(content=f"[FAIL] RAG 查询失败: {exc}")],
+            "next_agent": "end",
+        }
+
+
+def route_after_supervisor_v2(state: SupervisorStateV2) -> str:
+    plan = state.get("execution_plan")
+    if not plan or plan.fallback_to_rag or not plan.skills:
+        return "knowledge_qa"
+    return "orchestrator"
+
+
+def build_supervisor_graph_v2(checkpointer=None):
+    """构建 Supervisor v2 高级协同 StateGraph。"""
+    workflow = StateGraph(SupervisorStateV2)
+
+    workflow.add_node("pre_process", pre_process_node)
+    workflow.add_node("supervisor", supervisor_node_v2)
+    workflow.add_node("orchestrator", lambda state: state)  # 占位，实际路由在 conditional_edges
+    workflow.add_node("skill_executor_v2", skill_executor_v2_node)
+    workflow.add_node("final_aggregator", final_aggregator_node)
+    workflow.add_node("knowledge_qa", knowledge_qa_node_wrapper_v2)
+
+    workflow.set_entry_point("pre_process")
+    workflow.add_edge("pre_process", "supervisor")
+    workflow.add_conditional_edges(
+        "supervisor",
+        route_after_supervisor_v2,
+        {"orchestrator": "orchestrator", "knowledge_qa": "knowledge_qa"},
+    )
+    workflow.add_conditional_edges("orchestrator", orchestrator_dispatch)
+    workflow.add_conditional_edges(
+        "skill_executor_v2",
+        route_after_executor_v2,
+        {"orchestrator": "orchestrator", "final_aggregator": "final_aggregator"},
+    )
+    workflow.add_edge("final_aggregator", END)
+    workflow.add_edge("knowledge_qa", END)
+
+    if checkpointer is None:
+        from langgraph.checkpoint.memory import MemorySaver
+
+        checkpointer = MemorySaver()
+        print("[INFO] [Supervisor v2] Using Memory Checkpointer (Dev Mode)")
+
+    compiled = workflow.compile(checkpointer=checkpointer)
+    print("\n" + "=" * 60)
+    print("[OK] Supervisor Agent v2 (Advanced Collaboration) compiled successfully!")
+    print("=" * 60)
+    return compiled
+
+
+def get_supervisor_graph_v2():
+    try:
+        return build_supervisor_graph_v2(checkpointer=get_postgres_saver())
+    except Exception as exc:
+        print(f"[WARN] PostgreSQL checkpointer not available (v2): {exc}")
+        return build_supervisor_graph_v2()
+
+
+_compiled_graph_v2 = None
+
+
+def compiled_graph_v2():
+    global _compiled_graph_v2
+    if _compiled_graph_v2 is None:
+        _compiled_graph_v2 = get_supervisor_graph_v2()
+    return _compiled_graph_v2

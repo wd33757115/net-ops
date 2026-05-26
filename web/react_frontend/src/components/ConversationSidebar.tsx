@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import { Layout, Button, List, Typography, Upload, message, Spin, Popconfirm } from 'antd'
 import { PlusOutlined, FileTextOutlined, FolderOpenOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useChatStore, Conversation } from '../store/useChatStore'
@@ -17,21 +17,11 @@ const ConversationSidebar: React.FC = () => {
     loadConversations,
     loadConversationDetail,
     deleteConversation,
-    loading
+    loading,
   } = useChatStore()
 
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
-
-  useEffect(() => {
-    loadConversations()
-  }, [loadConversations])
-
-  useEffect(() => {
-    if (conversations.length === 0 && !loading) {
-      useChatStore.getState().createNewConversation()
-    }
-  }, [conversations.length, loading])
 
   const handleFileUpload = (file: File) => {
     if (!currentConversationId) {
@@ -67,10 +57,10 @@ const ConversationSidebar: React.FC = () => {
   }
 
   const handleSelectConversation = async (conv: Conversation) => {
-    if (conv.messages.length === 0) {
+    setCurrentConversation(conv.id)
+    if (!conv.detailLoaded && conv.messages.length === 0 && (conv.messageCount ?? 0) > 0) {
       await loadConversationDetail(conv.id)
     }
-    setCurrentConversation(conv.id)
   }
 
   const handleDeleteConversation = async (id: string) => {
@@ -139,7 +129,7 @@ const ConversationSidebar: React.FC = () => {
           新建对话
         </Button>
         <Button 
-          icon={<RefreshOutlined />}
+          icon={<ReloadOutlined />}
           onClick={loadConversations}
           loading={loading}
           style={{ borderRadius: '8px' }}

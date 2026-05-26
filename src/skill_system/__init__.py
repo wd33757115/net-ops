@@ -87,21 +87,22 @@ class SkillSystem:
         # 加载所有 Skill 元数据
         self.loader.scan_skill_dirs(skill_dirs)
 
-        # 初始化路由
-        if rag_service:
-            self.router = SemanticRouter(
-                rag_service=rag_service,
-                skill_loader=self.loader
-            )
+        # 始终初始化 SemanticRouter（关键词 + 可选 embedding/LLM Judge）
+        self.router = SemanticRouter(
+            rag_service=rag_service,
+            skill_loader=self.loader,
+            use_embedding=rag_service is not None,
+        )
 
         self._initialized = True
 
-    def route(self, query: str) -> list:
+    def route(self, query: str, top_k: int = 3) -> list:
         """
         路由用户查询到合适的 Skill
 
         Args:
             query: 用户查询
+            top_k: 返回前 k 个匹配
 
         Returns:
             List[SkillMatch]: 匹配的 Skill 列表
@@ -110,10 +111,8 @@ class SkillSystem:
             self.initialize()
 
         if self.router:
-            return self.router.route(query)
-        else:
-            # Fallback: 基于关键词匹配
-            return self._keyword_route(query)
+            return self.router.route(query, top_k=top_k)
+        return self._keyword_route(query)[:top_k]
 
     def _keyword_route(self, query: str) -> list:
         """基于关键词的简单路由"""

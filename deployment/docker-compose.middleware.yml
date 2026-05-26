@@ -1,4 +1,5 @@
-version: '3.8'
+# 测试/开发环境：仅启动中间件（PostgreSQL、Redis、RabbitMQ、MinIO、Qdrant）
+# 应用层（FastAPI / Django / React）由 scripts/test/start.ps1 本地进程启动
 
 networks:
   netops-network:
@@ -8,9 +9,7 @@ volumes:
   postgres-data:
   redis-data:
   minio-data:
-  chroma-data:
   rabbitmq-data:
-  django-static:
 
 services:
   postgres:
@@ -106,94 +105,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
-    networks:
-      - netops-network
-
-  langfuse:
-    image: ghcr.io/langfuse/langfuse:latest
-    container_name: netops-langfuse
-    ports:
-      - "3001:3000"
-    environment:
-      DATABASE_URL: postgresql://netops:netops123456@postgres:5432/netops_agent
-      NEXTAUTH_URL: http://localhost:3001
-      NEXTAUTH_SECRET: my-secret-key-2026-netops
-      SALT: netops-salt-2026
-      TELEMETRY_ENABLED: false
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - netops-network
-
-  fastapi:
-    image: python:3.11-slim
-    container_name: netops-fastapi
-    # 仅内网可达，不映射 host 8000（前端统一走 Django :8001）
-    expose:
-      - "8000"
-    env_file:
-      - ../.env
-    environment:
-      - POSTGRES_HOST=postgres
-      - REDIS_HOST=redis
-      - QDRANT_HOST=qdrant
-      - MINIO_ENDPOINT=minio:9000
-      - DEBUG=false
-      - ENFORCE_BFF_ORIGIN=true
-      - USE_SUPERVISOR_V2=false
-      - TZ=Asia/Shanghai
-    volumes:
-      - ..:/app
-    working_dir: /app
-    command: >
-      bash -c "pip install -r requirements.txt &&
-               python -m uvicorn src.gateway.main:app --host 0.0.0.0 --port 8000 --reload"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - netops-network
-
-  django:
-    build:
-      context: ..
-      dockerfile: deployment/Dockerfile.django
-    container_name: netops-django
-    ports:
-      - "8001:8001"
-    env_file:
-      - ../.env
-    environment:
-      - POSTGRES_HOST=postgres
-      - DJANGO_DEBUG=true
-      - FASTAPI_BASE_URL=http://fastapi:8000
-      - TZ=Asia/Shanghai
-    volumes:
-      - django-static:/app/web/django_backend/staticfiles
-      - ..:/app
-    depends_on:
-      - postgres
-    restart: unless-stopped
-    networks:
-      - netops-network
-
-  react:
-    build:
-      context: ..
-      dockerfile: deployment/Dockerfile.react
-      args:
-        - REACT_APP_API_URL=http://localhost:8001
-    container_name: netops-react
-    ports:
-      - "3000:80"
-    depends_on:
-      - django
     restart: unless-stopped
     networks:
       - netops-network

@@ -90,3 +90,48 @@ flowchart LR
   Django -->|"HTTP + WS 代理"| FastAPI["FastAPI :8000 内网"]
   FastAPI --> Skills["SkillManager / LangGraph"]
 ```
+
+## Supervisor v2 高级协同模式
+
+FastAPI 支持通过环境变量切换 Supervisor 图实现：
+
+| 变量 | 说明 |
+|------|------|
+| `USE_SUPERVISOR_V2=true` | 启用 v2：SemanticRouter 多匹配 + ExecutionPlan + Send fan-out + Map-Reduce |
+| 未设置 / `false` | 使用 v1 单 Skill 决策（`graph.py`） |
+
+v2 图结构：
+
+```
+START → pre_process → supervisor → orchestrator → skill_executor_v2 (×N) → final_aggregator → END
+```
+
+本地启用：
+
+```bash
+set USE_SUPERVISOR_V2=true
+python -m src.gateway.main
+```
+
+实现文件：`src/agents/supervisor/graph_v2.py`；单元测试：`tests/agents/test_graph_v2.py`。
+
+## 部署脚本
+
+详见 [scripts/README.md](../scripts/README.md)。
+
+**测试环境（本地开发）**
+
+```powershell
+.\scripts\test\install.ps1
+.\scripts\test\start.ps1
+.\scripts\test\e2e_supervisor_v2.ps1   # 联调
+.\scripts\test\stop.ps1
+```
+
+**生产环境（全 Docker）**
+
+```powershell
+.\scripts\prod\install.ps1
+.\scripts\prod\start.ps1
+.\scripts\prod\stop.ps1
+```

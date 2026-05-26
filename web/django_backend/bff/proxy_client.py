@@ -15,7 +15,7 @@ _client: httpx.AsyncClient | None = None
 
 DEFAULT_TIMEOUT = 30
 CHAT_TIMEOUT = 180
-HEALTH_TIMEOUT = 5
+HEALTH_TIMEOUT = 30
 TASK_TIMEOUT = 30
 
 

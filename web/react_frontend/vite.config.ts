@@ -6,9 +6,38 @@ export default defineConfig(({ mode }) => {
   const djangoTarget = env.VITE_DJANGO_BACKEND_URL || 'http://localhost:8001'
 
   return {
-    plugins: [react()],
+    plugins: [
+      react({ fastRefresh: false }),
+      {
+        name: 'strip-crossorigin-for-embedded-browser',
+        transformIndexHtml(html) {
+          return html.replace(/\s+crossorigin/g, '')
+        },
+      },
+    ],
+    optimizeDeps: {
+      needsInterop: ['react', 'react-dom', 'react-dom/client'],
+    },
     server: {
       port: 3000,
+      strictPort: true,
+      host: '0.0.0.0',
+      proxy: {
+        '/api': {
+          target: djangoTarget,
+          changeOrigin: true
+        },
+        '/ws': {
+          target: djangoTarget,
+          changeOrigin: true,
+          ws: true
+        }
+      }
+    },
+    preview: {
+      port: 3000,
+      strictPort: true,
+      host: '0.0.0.0',
       proxy: {
         '/api': {
           target: djangoTarget,

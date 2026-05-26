@@ -1,8 +1,10 @@
+import asyncio
 from functools import wraps
 
+from asgiref.sync import async_to_sync
 from django.conf import settings
-from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .response import bff_error
 
@@ -15,29 +17,43 @@ def _format_auth_error(detail) -> str:
     if isinstance(detail, str):
         return detail
     if isinstance(detail, list) and detail:
-        first = detail[0]
-        return str(first)
+        return str(detail[0])
     return str(detail)
 
 
-def require_jwt(view_func):
-    """异步 BFF 代理视图 JWT 鉴权装饰器。"""
+def _authenticate_request(request):
+    jwt_auth = JWTAuthentication()
+    try:
+        return jwt_auth.authenticate(request)
+    except AuthenticationFailed as exc:
+        return bff_error(_format_auth_error(exc.detail), 401)
 
-    @wraps(view_func)
-    async def wrapper(request, *args, **kwargs):
-        if not _auth_required():
+
+def require_jwt(view_func):
+    """BFF JWT 鉴权：兼容同步/异步视图。"""
+
+    if asyncio.iscoroutinefunction(view_func):
+
+        @wraps(view_func)
+        async def async_wrapper(request, *args, **kwargs):
+            if not _auth_required():
+                return await view_func(request, *args, **kwargs)
+            auth_result = _authenticate_request(request)
+            if not isinstance(auth_result, tuple):
+                return auth_result
+            request.user, request.auth = auth_result
             return await view_func(request, *args, **kwargs)
 
-        jwt_auth = JWTAuthentication()
-        try:
-            auth_result = jwt_auth.authenticate(request)
-        except AuthenticationFailed as exc:
-            return bff_error(_format_auth_error(exc.detail), 401)
+        return async_wrapper
 
-        if auth_result is None:
-            return bff_error("Authentication required", 401)
-
+    @wraps(view_func)
+    def sync_wrapper(request, *args, **kwargs):
+        if not _auth_required():
+            return view_func(request, *args, **kwargs)
+        auth_result = _authenticate_request(request)
+        if not isinstance(auth_result, tuple):
+            return auth_result
         request.user, request.auth = auth_result
-        return await view_func(request, *args, **kwargs)
+        return view_func(request, *args, **kwargs)
 
-    return wrapper
+    return sync_wrapper

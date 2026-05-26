@@ -1,16 +1,17 @@
 import logging
 
+from asgiref.sync import async_to_sync
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from ..sync_async import sync_bff_view
 from ..proxy_client import HEALTH_TIMEOUT, proxy_to_fastapi
 from ._helpers import forward_client_headers
 
 logger = logging.getLogger("bff.views.health")
 
 
-@csrf_exempt
-async def proxy_health(request: HttpRequest) -> JsonResponse:
+async def _proxy_health_async(request: HttpRequest) -> JsonResponse:
     return await proxy_to_fastapi(
         method="GET",
         fastapi_path="/health",
@@ -18,3 +19,9 @@ async def proxy_health(request: HttpRequest) -> JsonResponse:
         timeout=HEALTH_TIMEOUT,
         extra_headers=forward_client_headers(request),
     )
+
+
+@csrf_exempt
+def proxy_health(request: HttpRequest) -> JsonResponse:
+    """同步入口，兼容 Daphne + 同步中间件链。"""
+    return async_to_sync(_proxy_health_async)(request)

@@ -3,6 +3,7 @@ import logging
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from ..sync_async import sync_bff_view
 from ..proxy_client import DEFAULT_TIMEOUT, proxy_to_fastapi
 from ._helpers import forward_client_headers, parse_json_body
 
@@ -10,6 +11,7 @@ logger = logging.getLogger("bff.views.rag")
 
 
 @csrf_exempt
+@sync_bff_view
 async def proxy_rag_search(request: HttpRequest) -> JsonResponse:
     data = parse_json_body(request)
     return await proxy_to_fastapi(

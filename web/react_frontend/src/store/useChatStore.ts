@@ -20,6 +20,7 @@ export interface Conversation {
   createdAt?: string
   updatedAt?: string
   messageCount?: number
+  detailLoaded?: boolean
 }
 
 interface ChatStore {
@@ -27,6 +28,7 @@ interface ChatStore {
   conversations: Conversation[]
   uploadedFile: { name: string; path: string } | null
   loading: boolean
+  detailLoadingId: string | null
   error: string | null
   setCurrentConversation: (id: string) => void
   addMessage: (message: Message) => void
@@ -38,20 +40,23 @@ interface ChatStore {
   deleteConversation: (id: string) => void
 }
 
+const detailInflight = new Map<string, Promise<void>>()
+
 export const useChatStore = create<ChatStore>((set, get) => ({
   currentConversationId: null,
   conversations: [],
   uploadedFile: null,
   loading: false,
+  detailLoadingId: null,
   error: null,
   setCurrentConversation: (id: string) => set({ currentConversationId: id }),
   addMessage: (message: Message) => set(state => {
     const convId = state.currentConversationId
     if (!convId) return state
     return {
-      conversations: state.conversations.map(conv => 
+      conversations: state.conversations.map(conv =>
         conv.id === convId
-          ? { ...conv, messages: [...conv.messages, message] }
+          ? { ...conv, messages: [...conv.messages, message], detailLoaded: true }
           : conv
       )
     }
@@ -69,7 +74,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         summary: newConv.summary,
         createdAt: newConv.created_at,
         updatedAt: newConv.updated_at,
-        messageCount: 0
+        messageCount: 0,
+        detailLoaded: true,
       }
       set(state => ({
         conversations: [conversation, ...state.conversations],
@@ -77,12 +83,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }))
     } catch (error) {
       console.error('Failed to create conversation:', error)
-      // 如果后端不可用，回退到本地创建
       const newId = `conv-${Date.now()}`
       const newConv: Conversation = {
         id: newId,
         title: '新对话',
-        messages: []
+        messages: [],
+        detailLoaded: true,
       }
       set(state => ({
         conversations: [...state.conversations, newConv],
@@ -94,6 +100,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
   setUploadedFile: (file) => set({ uploadedFile: file }),
   loadConversations: async () => {
+    if (get().loading) return
     set({ loading: true, error: null })
     try {
       const { conversationApi } = await import('../services/api')
@@ -106,7 +113,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         summary: c.summary,
         createdAt: c.created_at,
         updatedAt: c.updated_at,
-        messageCount: c.message_count
+        messageCount: c.message_count,
+        detailLoaded: (c.message_count ?? 0) === 0,
       }))
       set({ conversations })
       if (conversations.length > 0 && !get().currentConversationId) {
@@ -120,34 +128,59 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
   loadConversationDetail: async (id: string) => {
-    set({ loading: true, error: null })
-    try {
-      const { conversationApi } = await import('../services/api')
-      const data = await conversationApi.getConversation(id)
-      const messages: Message[] = data.messages.map(m => ({
-        id: m.id,
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-        agentType: m.agent_type,
-        celeryTaskId: m.celery_task_id,
-        downloadUrl: m.download_url,
-        references: m.references,
-        createdAt: m.created_at
-      }))
+    const existing = get().conversations.find(c => c.id === id)
+    if (existing?.detailLoaded) return
+    if ((existing?.messageCount ?? 0) === 0) {
       set(state => ({
         conversations: state.conversations.map(conv =>
-          conv.id === id
-            ? { ...conv, messages, title: data.conversation.title }
-            : conv
+          conv.id === id ? { ...conv, detailLoaded: true } : conv
         ),
-        currentConversationId: id
       }))
-    } catch (error) {
-      console.error('Failed to load conversation detail:', error)
-      set({ error: '加载对话详情失败' })
-    } finally {
-      set({ loading: false })
+      return
     }
+    const inflight = detailInflight.get(id)
+    if (inflight) return inflight
+
+    const task = (async () => {
+      set({ detailLoadingId: id, error: null })
+      try {
+        const { conversationApi } = await import('../services/api')
+        const data = await conversationApi.getConversation(id)
+        const messages: Message[] = data.messages.map(m => ({
+          id: m.id,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          agentType: m.agent_type,
+          celeryTaskId: m.celery_task_id,
+          downloadUrl: m.download_url,
+          references: m.references,
+          createdAt: m.created_at
+        }))
+        set(state => ({
+          conversations: state.conversations.map(conv =>
+            conv.id === id
+              ? { ...conv, messages, title: data.conversation.title, detailLoaded: true }
+              : conv
+          ),
+        }))
+      } catch (error) {
+        console.error('Failed to load conversation detail:', error)
+        set(state => ({
+          error: '加载对话详情失败',
+          conversations: state.conversations.map(conv =>
+            conv.id === id ? { ...conv, detailLoaded: true } : conv
+          ),
+        }))
+      } finally {
+        detailInflight.delete(id)
+        set(state => ({
+          detailLoadingId: state.detailLoadingId === id ? null : state.detailLoadingId
+        }))
+      }
+    })()
+
+    detailInflight.set(id, task)
+    return task
   },
   updateConversationTitle: (id: string, title: string) => set(state => ({
     conversations: state.conversations.map(conv =>
@@ -156,8 +189,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   })),
   deleteConversation: (id: string) => set(state => ({
     conversations: state.conversations.filter(conv => conv.id !== id),
-    currentConversationId: state.currentConversationId === id 
-      ? state.conversations.find(c => c.id !== id)?.id || null 
+    currentConversationId: state.currentConversationId === id
+      ? state.conversations.find(c => c.id !== id)?.id || null
       : state.currentConversationId
   }))
 }))

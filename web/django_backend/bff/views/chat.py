@@ -5,6 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from ..decorators import require_jwt
 from ..proxy_client import CHAT_TIMEOUT, proxy_to_fastapi
+from ..sync_async import sync_bff_view
 from ._helpers import forward_client_headers, parse_json_body
 
 logger = logging.getLogger("bff.views.chat")
@@ -12,6 +13,7 @@ logger = logging.getLogger("bff.views.chat")
 
 @csrf_exempt
 @require_jwt
+@sync_bff_view
 async def proxy_chat(request: HttpRequest) -> JsonResponse:
     data = parse_json_body(request)
     return await proxy_to_fastapi(

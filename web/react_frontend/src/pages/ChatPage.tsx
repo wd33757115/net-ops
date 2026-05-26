@@ -47,12 +47,13 @@ const ChatPage: React.FC = () => {
     }
   }, [loadConversations])
 
-  // 当切换对话时，加载对话详情
+  // 当切换对话时，加载对话详情（仅未加载且有历史消息时）
   useEffect(() => {
-    if (currentConversationId && (!currentConversation || currentConversation.messages.length === 0)) {
-      loadConversationDetail(currentConversationId)
-    }
-  }, [currentConversationId, currentConversation, loadConversationDetail])
+    if (!currentConversationId) return
+    const conv = conversations.find(c => c.id === currentConversationId)
+    if (!conv || conv.detailLoaded || conv.messages.length > 0) return
+    loadConversationDetail(currentConversationId)
+  }, [currentConversationId, conversations, loadConversationDetail])
 
   useEffect(() => {
     if (currentConversationId) {
