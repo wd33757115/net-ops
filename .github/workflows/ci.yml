@@ -70,9 +70,24 @@ jobs:
           cache: pip
       - run: pip install -r web/django_backend/requirements.txt
       - run: cd web/django_backend && python -m django check --settings=django_backend.settings
+      - run: |
+          cd web/django_backend
+          python -c "from bff.urls import urlpatterns; assert any('skills/' in str(p.pattern) for p in urlpatterns); print('BFF skills routes OK')"
+
+  test-skills-ui:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - run: pytest tests/integration/test_skills_api.py -v
 
   docker-build:
-    needs: [test-fastapi, test-django]
+    needs: [test-fastapi, test-django, test-skills-ui]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

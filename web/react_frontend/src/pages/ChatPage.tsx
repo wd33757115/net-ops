@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Layout, Typography, Spin, message } from 'antd'
 import { useMutation } from 'react-query'
-import Sidebar from '../components/Sidebar'
+import ConversationSidebar from '../components/ConversationSidebar'
 import ChatMessage from '../components/ChatMessage'
 import InputArea from '../components/InputArea'
 import { useChatStore } from '../store/useChatStore'
@@ -132,7 +132,7 @@ const ChatPage: React.FC = () => {
 
   return (
     <Layout style={{ height: '100vh' }}>
-      <Sidebar />
+      <ConversationSidebar />
       
       <Layout style={{ display: 'flex', flexDirection: 'column' }}>
         <Header style={{ 

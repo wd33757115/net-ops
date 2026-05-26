@@ -2,11 +2,12 @@ import React, { useEffect, useState } from 'react'
 import { Layout, Button, List, Typography, Upload, message, Spin, Popconfirm } from 'antd'
 import { PlusOutlined, FileTextOutlined, FolderOpenOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useChatStore, Conversation } from '../store/useChatStore'
+import { chatApi } from '../services/api'
 
 const { Sider } = Layout
 const { Title, Text } = Typography
 
-const Sidebar: React.FC = () => {
+const ConversationSidebar: React.FC = () => {
   const { 
     conversations, 
     currentConversationId, 
@@ -20,6 +21,7 @@ const Sidebar: React.FC = () => {
   } = useChatStore()
 
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     loadConversations()
@@ -31,10 +33,36 @@ const Sidebar: React.FC = () => {
     }
   }, [conversations.length, loading])
 
-  const handleFileUpload = (file: any) => {
-    const fakePath = `/uploads/${file.name}`
-    setUploadedFile({ name: file.name, path: fakePath })
-    message.success(`文件 ${file.name} 已上传`)
+  const handleFileUpload = (file: File) => {
+    if (!currentConversationId) {
+      message.warning('请先选择或创建一个对话')
+      return Upload.LIST_IGNORE
+    }
+
+    setUploading(true)
+    const reader = new FileReader()
+    reader.onload = async () => {
+      try {
+        const result = reader.result as string
+        const base64 = result.includes(',') ? result.split(',')[1] : result
+        const uploadResult = await chatApi.uploadFile({
+          thread_id: currentConversationId,
+          filename: file.name,
+          file_content: base64,
+        })
+        setUploadedFile({ name: file.name, path: uploadResult.file_path })
+        message.success(uploadResult.message || `文件 ${file.name} 已上传`)
+      } catch {
+        message.error('文件上传失败')
+      } finally {
+        setUploading(false)
+      }
+    }
+    reader.onerror = () => {
+      message.error('读取文件失败')
+      setUploading(false)
+    }
+    reader.readAsDataURL(file)
     return false
   }
 
@@ -124,6 +152,7 @@ const Sidebar: React.FC = () => {
           fileList={[]}
           beforeUpload={handleFileUpload}
           showUploadList={false}
+          disabled={uploading}
           style={{ borderRadius: '8px' }}
         >
           <p className="ant-upload-drag-icon">
@@ -208,4 +237,4 @@ const Sidebar: React.FC = () => {
   )
 }
 
-export default Sidebar
+export default ConversationSidebar

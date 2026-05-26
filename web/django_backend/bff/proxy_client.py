@@ -3,14 +3,15 @@ from typing import Any
 
 import httpx
 from django.conf import settings
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import JsonResponse
+
+from .response import bff_error, bff_success
 
 logger = logging.getLogger("bff.proxy")
 
 FASTAPI_BASE_URL = getattr(settings, "FASTAPI_BASE_URL", "http://localhost:8000")
 
 _client: httpx.AsyncClient | None = None
-_client_ws: httpx.AsyncClient | None = None  # WebSocket 专用客户端
 
 DEFAULT_TIMEOUT = 30
 CHAT_TIMEOUT = 180
@@ -28,28 +29,47 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-def _get_ws_client() -> httpx.AsyncClient:
-    global _client_ws
-    if _client_ws is None or _client_ws.is_closed:
-        _client_ws = httpx.AsyncClient(
-            timeout=httpx.Timeout(CHAT_TIMEOUT),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=20),
-        )
-    return _client_ws
-
-
 def _build_url(path: str) -> str:
     return f"{FASTAPI_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+
+
+def build_fastapi_ws_url(path: str, query_string: bytes = b"") -> str:
+    """将 HTTP FastAPI 地址转换为 WebSocket 上游地址。"""
+    base = FASTAPI_BASE_URL.rstrip("/")
+    if base.startswith("https://"):
+        ws_base = "wss://" + base[len("https://") :]
+    elif base.startswith("http://"):
+        ws_base = "ws://" + base[len("http://") :]
+    else:
+        ws_base = f"ws://{base}"
+
+    url = f"{ws_base}/{path.lstrip('/')}"
+    if query_string:
+        url += "?" + query_string.decode("utf-8")
+    return url
 
 
 def _build_headers(request_id: str, extra: dict | None = None) -> dict:
     headers = {
         "X-Request-ID": request_id,
         "X-Forwarded-From": "django-bff",
+        "X-Internal-Request": "true",
     }
     if extra:
         headers.update(extra)
     return headers
+
+
+def _extract_upstream_error(body: Any) -> str:
+    if isinstance(body, dict):
+        if body.get("error"):
+            return str(body["error"])
+        detail = body.get("detail")
+        if isinstance(detail, list) and detail:
+            return str(detail[0])
+        if detail:
+            return str(detail)
+    return str(body)
 
 
 async def _proxy_json_response(
@@ -57,18 +77,21 @@ async def _proxy_json_response(
     request_id: str,
 ) -> JsonResponse:
     if response.status_code == 204:
-        return JsonResponse({}, status=204)
+        return bff_success(None, status=204)
 
     try:
         body = response.json()
     except Exception:
         body = {"raw": response.text}
 
-    wrapped = {
-        "data": body,
-        "meta": {"request_id": request_id, "upstream_status": response.status_code},
-    }
-    return JsonResponse(wrapped, status=response.status_code, safe=False)
+    if response.status_code >= 400:
+        return bff_error(
+            _extract_upstream_error(body),
+            response.status_code,
+            data=body,
+        )
+
+    return bff_success(body, status=response.status_code)
 
 
 async def proxy_request(
@@ -97,22 +120,19 @@ async def proxy_request(
         response = await client.request(method, url, **req_kwargs)
         if json_response:
             return await _proxy_json_response(response, request_id)
-        return JsonResponse({"raw": response.text}, status=response.status_code)
+        return bff_success({"raw": response.text}, status=response.status_code)
     except httpx.TimeoutException:
         logger.warning(f"[{request_id}] Upstream timeout: {method} {url}")
-        return JsonResponse(
-            {"error": f"Upstream service timeout after {timeout or DEFAULT_TIMEOUT}s"},
-            status=504,
+        return bff_error(
+            f"Upstream service timeout after {timeout or DEFAULT_TIMEOUT}s",
+            504,
         )
-    except httpx.ConnectError as e:
-        logger.error(f"[{request_id}] Upstream connection failed: {method} {url} -> {e}")
-        return JsonResponse(
-            {"error": f"Upstream service unreachable: {str(e)}"},
-            status=502,
-        )
-    except Exception as e:
-        logger.error(f"[{request_id}] Proxy error: {method} {url} -> {e}")
-        return JsonResponse({"error": str(e)}, status=500)
+    except httpx.ConnectError as exc:
+        logger.error(f"[{request_id}] Upstream connection failed: {method} {url} -> {exc}")
+        return bff_error(f"Upstream service unreachable: {str(exc)}", 502)
+    except Exception as exc:
+        logger.error(f"[{request_id}] Proxy error: {method} {url} -> {exc}")
+        return bff_error(str(exc), 500)
 
 
 async def proxy_to_fastapi(
@@ -122,6 +142,7 @@ async def proxy_to_fastapi(
     data: dict | None = None,
     params: dict | None = None,
     timeout: int | None = None,
+    extra_headers: dict | None = None,
 ) -> JsonResponse:
     return await proxy_request(
         method=method,
@@ -130,4 +151,5 @@ async def proxy_to_fastapi(
         data=data,
         params=params,
         timeout=timeout,
+        extra_headers=extra_headers,
     )

@@ -21,6 +21,7 @@ ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split('
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -30,6 +31,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
+    'channels',
     'chat',
 ]
 
@@ -181,6 +183,17 @@ SIMPLE_JWT = {
 
 # FastAPI 后端地址
 FASTAPI_BASE_URL = os.getenv('FASTAPI_BASE_URL', 'http://localhost:8000')
+
+# BFF 鉴权：生产默认开启；开发环境 DEBUG=True 时默认关闭（可设 BFF_REQUIRE_AUTH=true 强制开启）
+BFF_REQUIRE_AUTH = os.getenv('BFF_REQUIRE_AUTH', '').lower() in ('true', '1', 'yes') if os.getenv('BFF_REQUIRE_AUTH') else (not DEBUG)
+
+
+# Channels（WebSocket 代理）
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
 
 
 # Default primary key field type

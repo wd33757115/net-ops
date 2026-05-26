@@ -1,14 +1,25 @@
-import axios from 'axios'
-
-const api = axios.create({
-  baseURL: '/api',
-  timeout: 120000
-})
+import { api, getChatWebSocketUrl } from '../config/api'
 
 export interface ChatRequest {
   query: string
   thread_id?: string
   uploaded_file_path?: string
+}
+
+export interface ChatUploadRequest {
+  thread_id: string
+  filename: string
+  file_content: string
+  user_id?: string
+}
+
+export interface ChatUploadResponse {
+  thread_id: string
+  filename: string
+  file_path: string
+  status: string
+  message: string
+  next_steps?: string
 }
 
 export interface ChatResponse {
@@ -48,9 +59,31 @@ export interface ConversationDetail {
   messages: Message[]
 }
 
+export interface SkillItem {
+  name: string
+  description: string
+  category: string
+  tags: string[]
+  enabled: boolean
+  version?: string
+  fallback_to_rag?: boolean
+}
+
+export interface SkillStats {
+  total_skills: number
+  enabled_skills: number
+  disabled_skills: number
+  categories: Record<string, number>
+  skills?: Array<{ name: string; category: string; enabled: boolean }>
+}
+
 export const chatApi = {
   sendMessage: async (data: ChatRequest): Promise<ChatResponse> => {
     const response = await api.post<ChatResponse>('/chat/', data)
+    return response.data
+  },
+  uploadFile: async (data: ChatUploadRequest): Promise<ChatUploadResponse> => {
+    const response = await api.post<ChatUploadResponse>('/chat/upload/', data)
     return response.data
   },
   getHealth: async () => {
@@ -100,14 +133,61 @@ export const conversationApi = {
   }
 }
 
+export const authApi = {
+  login: async (username: string, password: string) => {
+    const response = await api.post('/auth/login/', { username, password })
+    return response.data as { access: string; refresh: string; user: { id: number; username: string; email: string } }
+  }
+}
+
+export const skillApi = {
+  list: async (): Promise<SkillItem[]> => {
+    const response = await api.get<SkillItem[]>('/skills/')
+    return response.data
+  },
+  getStats: async (): Promise<SkillStats> => {
+    const response = await api.get<SkillStats>('/skills/stats/')
+    return response.data
+  },
+  create: async (data: Record<string, unknown>) => {
+    const response = await api.post('/skills/', data)
+    return response.data
+  },
+  toggle: async (name: string, enabled: boolean) => {
+    const response = await api.patch(`/skills/${name}/toggle/`, { enabled })
+    return response.data
+  },
+  reload: async (name: string) => {
+    const response = await api.post(`/skills/${name}/reload/`)
+    return response.data
+  },
+  getContent: async (name: string): Promise<{ name: string; content: string }> => {
+    const response = await api.get<{ name: string; content: string }>(`/skills/${name}/content/`)
+    return response.data
+  },
+  saveContent: async (name: string, content: string) => {
+    const response = await api.put(`/skills/${name}/content/`, { content })
+    return response.data
+  },
+  listFiles: async (name: string): Promise<{ files: Record<string, string[]> }> => {
+    const response = await api.get<{ files: Record<string, string[]> }>(`/skills/${name}/files/`)
+    return response.data
+  },
+  uploadFile: async (
+    name: string,
+    data: { folder: string; filename: string; file_content: string }
+  ) => {
+    const response = await api.post(`/skills/${name}/files/`, data)
+    return response.data
+  },
+  delete: async (name: string) => {
+    const response = await api.delete(`/skills/${name}/`)
+    return response.data
+  },
+}
+
 export const wsApi = {
   connectChat: (threadId?: string): WebSocket => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    let url = `${protocol}//${host}/ws/v1/chat`
-    if (threadId) {
-      url += `?thread_id=${threadId}`
-    }
-    return new WebSocket(url)
+    return new WebSocket(getChatWebSocketUrl(threadId))
   }
 }

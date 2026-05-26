@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     ITSM_WEBHOOK_SECRET: str = "itsm-secret-2026"
     ITSM_CALLBACK_URL: str | None = None
 
+    ENFORCE_BFF_ORIGIN: bool | None = None
+
     PROJECT_NAME: str = "NetOps-MultiAgent"
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"

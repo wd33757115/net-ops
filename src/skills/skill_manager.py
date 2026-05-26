@@ -312,6 +312,82 @@ class SkillManager:
             logger.error(f"重新加载所有 Skill 失败: {e}")
             return {"success": False, "message": f"加载失败: {str(e)}"}
 
+    def save_skill_content(self, skill_name: str, content: str) -> dict[str, Any]:
+        """保存 SKILL.md 原文并热重载。"""
+        try:
+            skill_dir = self._skills_dir / skill_name
+            if not skill_dir.exists():
+                return {"success": False, "message": f"Skill '{skill_name}' 不存在"}
+
+            skill_md = skill_dir / "SKILL.md"
+            skill_md.write_text(content, encoding="utf-8")
+            self.reload_skill(skill_name)
+
+            return {"success": True, "message": f"Skill '{skill_name}' 内容已保存"}
+        except Exception as e:
+            logger.error(f"保存 Skill 内容失败: {e}")
+            return {"success": False, "message": f"保存失败: {str(e)}"}
+
+    def list_skill_files(self, skill_name: str) -> dict[str, Any]:
+        """列出 Skill 目录下 scripts/references/assets 中的文件。"""
+        allowed = ("scripts", "references", "assets")
+        skill_dir = self._skills_dir / skill_name
+        if not skill_dir.exists():
+            return {"success": False, "message": f"Skill '{skill_name}' 不存在", "files": {}}
+
+        files: dict[str, list[str]] = {}
+        for folder in allowed:
+            folder_path = skill_dir / folder
+            if not folder_path.exists():
+                files[folder] = []
+                continue
+            files[folder] = sorted(
+                str(p.relative_to(folder_path)).replace("\\", "/")
+                for p in folder_path.rglob("*")
+                if p.is_file()
+            )
+        return {"success": True, "files": files}
+
+    def upload_skill_file(
+        self,
+        skill_name: str,
+        folder: str,
+        filename: str,
+        file_content: str,
+    ) -> dict[str, Any]:
+        """上传文件到 Skill 子目录（base64 内容）。"""
+        import base64
+
+        allowed = {"scripts", "references", "assets"}
+        if folder not in allowed:
+            return {"success": False, "message": f"不允许的目录: {folder}"}
+
+        safe_name = Path(filename).name
+        if not safe_name or safe_name.startswith(".") or ".." in safe_name:
+            return {"success": False, "message": "非法文件名"}
+
+        skill_dir = self._skills_dir / skill_name
+        if not skill_dir.exists():
+            return {"success": False, "message": f"Skill '{skill_name}' 不存在"}
+
+        target_dir = skill_dir / folder
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / safe_name
+
+        try:
+            raw = base64.b64decode(file_content)
+            target_path.write_bytes(raw)
+            self.reload_skill(skill_name)
+            rel = f"{folder}/{safe_name}"
+            return {
+                "success": True,
+                "message": f"文件 {rel} 上传成功",
+                "path": rel,
+            }
+        except Exception as e:
+            logger.error(f"上传 Skill 文件失败: {e}")
+            return {"success": False, "message": f"上传失败: {str(e)}"}
+
     def get_skill_content(self, skill_name: str) -> str | None:
         """
         获取 Skill 的 SKILL.md 内容

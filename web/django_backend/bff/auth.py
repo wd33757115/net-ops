@@ -1,9 +1,11 @@
+import json
+
+from django.contrib.auth import authenticate
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from ..proxy_client import proxy_to_fastapi
+from .response import bff_error, bff_success
 
 
 def get_tokens_for_user(user):
@@ -21,48 +23,42 @@ def get_tokens_for_user(user):
 
 @csrf_exempt
 def bff_login(request):
-    import json
-
     try:
         body = json.loads(request.body.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return bff_error("Invalid JSON", 400)
 
     username = body.get("username")
     password = body.get("password")
 
     if not username or not password:
-        return JsonResponse({"error": "username and password are required"}, status=400)
+        return bff_error("username and password are required", 400)
 
     user = authenticate(username=username, password=password)
     if user is None:
-        return JsonResponse({"error": "Invalid credentials"}, status=401)
+        return bff_error("Invalid credentials", 401)
 
-    tokens = get_tokens_for_user(user)
-    return JsonResponse(tokens, status=200)
+    return bff_success(get_tokens_for_user(user))
 
 
 @csrf_exempt
 def bff_refresh(request):
-    import json
-
     try:
         body = json.loads(request.body.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return bff_error("Invalid JSON", 400)
 
     refresh_token = body.get("refresh")
     if not refresh_token:
-        return JsonResponse({"error": "refresh token is required"}, status=400)
+        return bff_error("refresh token is required", 400)
 
     try:
         refresh = RefreshToken(refresh_token)
-        return JsonResponse(
+        return bff_success(
             {
                 "access": str(refresh.access_token),
                 "refresh": str(refresh),
-            },
-            status=200,
+            }
         )
     except Exception:
-        return JsonResponse({"error": "Invalid or expired refresh token"}, status=401)
+        return bff_error("Invalid or expired refresh token", 401)

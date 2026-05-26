@@ -211,3 +211,39 @@ class UpdateConversationRequest(BaseModel):
     title: str | None = Field(None, description="新标题")
     status: str | None = Field(None, description="状态：active / archived")
     summary: str | None = Field(None, description="对话总结")
+
+
+class CreateSkillRequest(BaseModel):
+    name: str = Field(..., description="Skill 名称")
+    description: str = Field("", description="描述")
+    category: str = Field("general", description="分类")
+    tags: list[str] = Field(default_factory=list)
+    version: str = Field("1.0.0")
+    author: str = Field("NetOps Team")
+    triggers: list[str] = Field(default_factory=list)
+    instructions: str | None = Field(None, description="Markdown 指令正文")
+
+
+class UpdateSkillRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    category: str | None = None
+    tags: list[str] | None = None
+    version: str | None = None
+    author: str | None = None
+    triggers: list[str] | None = None
+    instructions: str | None = None
+
+
+class SkillContentRequest(BaseModel):
+    content: str = Field(..., description="SKILL.md 全文")
+
+
+class SkillToggleRequest(BaseModel):
+    enabled: bool = Field(..., description="是否启用")
+
+
+class SkillFileUploadRequest(BaseModel):
+    folder: str = Field(..., description="scripts / references / assets")
+    filename: str = Field(..., description="文件名")
+    file_content: str = Field(..., description="Base64 编码的文件内容")

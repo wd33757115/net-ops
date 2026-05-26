@@ -5,6 +5,8 @@ from collections import defaultdict
 
 from django.http import HttpRequest, JsonResponse
 
+from .response import bff_error
+
 logger = logging.getLogger("bff.middleware")
 
 
@@ -60,12 +62,10 @@ class BFFRateLimitMiddleware:
     def __call__(self, request: HttpRequest):
         ip = _get_client_ip(request)
         if self._is_rate_limited(ip, request.path):
-            return JsonResponse(
-                {
-                    "error": "Rate limit exceeded. Please try again later.",
-                    "retry_after_seconds": self._window_seconds,
-                },
-                status=429,
+            return bff_error(
+                "Rate limit exceeded. Please try again later.",
+                429,
+                data={"retry_after_seconds": self._window_seconds},
             )
 
         now = time.monotonic()

@@ -47,7 +47,14 @@ from langchain_core.messages import HumanMessage
 from src.agents.supervisor.graph import compiled_graph as get_supervisor_graph
 from src.common.config import get_settings
 from src.core.rag_service.service import get_rag_service
+from src.gateway.bff_security import (
+    is_bff_bypass_path,
+    is_enforce_bff_origin_enabled,
+    is_trusted_bff_request,
+    reject_message,
+)
 from src.gateway.conversation_service import get_conversation_service
+from src.gateway.skills_api import router as skills_router
 from src.gateway.schemas import (
     AddMessageRequest,
     ChatFileUploadRequest,
@@ -150,6 +157,8 @@ async def lifespan(app: FastAPI):
     print("[Lifespan] [OK] Agent Graph will be lazy-loaded on first request")
 
     print("=" * 60)
+    enforce = is_enforce_bff_origin_enabled()
+    print(f"[Lifespan] BFF origin enforcement: {'ON' if enforce else 'OFF'}")
     print(f"[Lifespan] Startup complete. Docs: http://localhost:{settings.FASTAPI_PORT}/docs")
     print("=" * 60 + "\n")
 
@@ -187,6 +196,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(skills_router)
+
 # =============================================================================
 # CORS 中间件（生产环境请限制 origins）
 # =============================================================================
@@ -200,22 +211,19 @@ app.add_middleware(
 
 
 # =============================================================================
-# 内部请求验证中间件（生产环境拒绝未经 Django BFF 的请求）
+# 内部请求验证中间件（拒绝未经 Django BFF 转发的请求）
 # =============================================================================
-_ITSM_PATHS = {"/api/v1/itsm/webhook", "/api/v1/itsm/webhook/firewall-policy"}
-
-
 @app.middleware("http")
 async def bff_origin_check(request: Request, call_next):
-    forwarded_from = request.headers.get("X-Forwarded-From", "")
-    if request.url.path not in _ITSM_PATHS and forwarded_from != "django-bff":
-        import os
-        if os.getenv("ENFORCE_BFF_ORIGIN", "").lower() in ("true", "1"):
-            from fastapi.responses import JSONResponse
-            return JSONResponse(
-                status_code=403,
-                content={"error": "Access only allowed via Django BFF"},
-            )
+    if not is_enforce_bff_origin_enabled():
+        return await call_next(request)
+
+    if is_bff_bypass_path(request.url.path):
+        return await call_next(request)
+
+    if not is_trusted_bff_request(request.headers):
+        return JSONResponse(status_code=403, content=reject_message())
+
     return await call_next(request)
 
 
@@ -396,6 +404,10 @@ async def websocket_chat_endpoint(websocket: WebSocket):
     - 支持保持对话上下文
     - 使用 ainvoke 异步调用 Agent Graph
     """
+    if is_enforce_bff_origin_enabled() and not is_trusted_bff_request(websocket.headers):
+        await websocket.close(code=4403, reason="Access only allowed via Django BFF")
+        return
+
     await websocket.accept()
     thread_id = f"ws-thread-{uuid.uuid4().hex[:12]}"
     config = {"configurable": {"thread_id": thread_id}}
