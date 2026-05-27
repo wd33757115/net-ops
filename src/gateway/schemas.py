@@ -247,3 +247,11 @@ class SkillFileUploadRequest(BaseModel):
     folder: str = Field(..., description="scripts / references / assets")
     filename: str = Field(..., description="文件名")
     file_content: str = Field(..., description="Base64 编码的文件内容")
+
+
+class KnowledgeUploadRequest(BaseModel):
+    filename: str = Field(..., description="文件名")
+    file_content: str = Field(..., description="Base64 编码的文件内容")
+    relative_path: str | None = Field(None, description="相对 knowledge_base 的路径，如 sops/foo.md")
+    folder: str = Field("", description="子目录（relative_path 为空时使用）")
+    auto_reindex: bool = Field(True, description="上传后是否自动重建索引")

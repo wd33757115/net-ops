@@ -790,15 +790,13 @@ class SkillRegistry:
         三级自动解析 Celery 任务名称
 
         优先级:
-          1. 硬编码映射 _SKILL_TO_TASK_MAP（向后兼容）
-          2. SKILL.md frontmatter 的 celery_task 字段
-          3. 命名约定自动推导: skill-name → execute_skill_name_task
-             （连字符替换为下划线）
-
-        Returns:
-            str | None: Celery 任务名称，None 表示纯 LLM 推理型 Skill
+          1. execution_mode=sync → 不走 Celery
+          2. 硬编码映射 _SKILL_TO_TASK_MAP（向后兼容）
+          3. SKILL.md frontmatter 的 celery_task 字段
+          4. 命名约定自动推导
         """
-        # L1: 硬编码映射
+        if metadata and getattr(metadata, "execution_mode", None) == "sync":
+            return None
         task_name = cls._SKILL_TO_TASK_MAP.get(skill_name)
         if task_name:
             return task_name

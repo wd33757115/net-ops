@@ -30,6 +30,7 @@ from .metadata import (
     parse_skill_md,
 )
 from .router import SemanticRouter, SkillMatch
+from .trigger_match import trigger_matches
 
 __version__ = "1.0.0"
 
@@ -133,7 +134,7 @@ class SkillSystem:
             # 检查 triggers
             triggers = getattr(skill, 'triggers', [])
             for trigger in triggers:
-                if trigger.lower() in query.lower():
+                if trigger_matches(trigger, query):
                     matches.append(SkillMatch(
                         skill_name=skill.name,
                         confidence=0.9,

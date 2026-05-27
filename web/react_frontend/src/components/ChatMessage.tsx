@@ -10,9 +10,10 @@ interface ChatMessageProps {
   content: string
   agentType?: string
   downloadUrl?: string
+  compact?: boolean
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, agentType }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, agentType, compact }) => {
   const isUser = role === 'user'
 
   return (
@@ -35,7 +36,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, agentType }) =
 
       <div
         style={{
-          maxWidth: '70%',
+          maxWidth: compact ? '92%' : '70%',
           display: 'flex',
           flexDirection: 'column',
           alignItems: isUser ? 'flex-end' : 'flex-start',

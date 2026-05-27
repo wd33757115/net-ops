@@ -4,6 +4,7 @@ from src.agents.supervisor.graph_v2 import (
     INTERMEDIATE_RESULTS_RESET,
     _build_heuristic_execution_plan,
     _build_send_payload,
+    _detect_dependency_cycle,
     _extract_ticket_id,
     _filter_skill_matches,
     _has_trigger_match,
@@ -11,6 +12,8 @@ from src.agents.supervisor.graph_v2 import (
     _merge_dicts,
     _merge_params_with_deps,
     _next_runnable_task,
+    _parallel_runnable_tasks,
+    _should_fallback_to_rag_after_skills,
     build_supervisor_graph_v2,
     orchestrator_dispatch,
     route_after_executor_v2,
@@ -190,6 +193,17 @@ def test_route_after_executor_parallel_goes_to_aggregator():
     assert route_after_executor_v2(state) == "final_aggregator"
 
 
+def test_route_after_executor_parallel_failed_skills_fallback_rag():
+    plan = ExecutionPlan(
+        reasoning="并行失败",
+        skills=[SkillTaskSpec(skill_name="a", parameters={})],
+        execution_mode="parallel",
+        fallback_to_rag=True,
+    )
+    state = {"execution_plan": plan, "intermediate_results": {"a": {"success": False}}}
+    assert route_after_executor_v2(state) == "knowledge_qa"
+
+
 def test_build_supervisor_graph_v2_compiles():
     graph = build_supervisor_graph_v2()
     assert graph is not None
@@ -208,3 +222,103 @@ def test_build_send_payload_creates_skill_decision():
     payload = _build_send_payload(state, task)
     assert payload["skill_decision"].skill_name == "config-backup"
     assert payload["skill_decision"].parameters.get("uploaded_file_path") == "/tmp/x"
+
+
+def test_next_runnable_task_skips_failed_dependency():
+    tasks = [
+        SkillTaskSpec(skill_name="a", parameters={}),
+        SkillTaskSpec(skill_name="b", parameters={}, depends_on=["a"]),
+    ]
+    intermediate = {"a": {"success": False, "message": "failed"}}
+    assert _next_runnable_task(tasks, {"a"}, intermediate) is None
+
+
+def test_parallel_runnable_respects_dependencies():
+    pending = [
+        SkillTaskSpec(skill_name="a", parameters={}),
+        SkillTaskSpec(skill_name="b", parameters={}, depends_on=["a"]),
+    ]
+    assert len(_parallel_runnable_tasks(pending, set(), {})) == 1
+    assert _parallel_runnable_tasks(pending, set(), {})[0].skill_name == "a"
+    runnable = _parallel_runnable_tasks(pending, {"a"}, {"a": {"success": True}})
+    assert len(runnable) == 1
+    assert runnable[0].skill_name == "b"
+
+
+def test_orchestrator_parallel_with_deps_runs_in_waves():
+    plan = ExecutionPlan(
+        reasoning="先 A 后 B",
+        skills=[
+            SkillTaskSpec(skill_name="a", parameters={}),
+            SkillTaskSpec(skill_name="b", parameters={}, depends_on=["a"]),
+        ],
+        execution_mode="parallel",
+    )
+    state = {
+        "execution_plan": plan,
+        "intermediate_results": {},
+        "uploaded_file_path": None,
+        "ticket_id": "",
+        "messages": [],
+    }
+    wave1 = orchestrator_dispatch(state)
+    assert isinstance(wave1, list)
+    assert len(wave1) == 1
+    assert wave1[0].arg["current_skill_task"].skill_name == "a"
+
+    state_after_a = {
+        **state,
+        "intermediate_results": {"a": {"success": True, "message": "ok"}},
+    }
+    assert route_after_executor_v2(state_after_a) == "orchestrator"
+    wave2 = orchestrator_dispatch(state_after_a)
+    assert isinstance(wave2, list)
+    assert len(wave2) == 1
+    assert wave2[0].arg["current_skill_task"].skill_name == "b"
+
+
+def test_detect_dependency_cycle():
+    tasks = [
+        SkillTaskSpec(skill_name="a", parameters={}, depends_on=["b"]),
+        SkillTaskSpec(skill_name="b", parameters={}, depends_on=["a"]),
+    ]
+    assert _detect_dependency_cycle(tasks) is True
+
+
+def test_should_fallback_to_rag_when_all_skills_failed():
+    plan = ExecutionPlan(
+        reasoning="test",
+        skills=[SkillTaskSpec(skill_name="firewall-policy-generator", parameters={})],
+        execution_mode="parallel",
+        fallback_to_rag=True,
+    )
+    state = {
+        "execution_plan": plan,
+        "intermediate_results": {
+            "firewall-policy-generator": {"success": False, "message": "err"},
+        },
+    }
+    assert _should_fallback_to_rag_after_skills(state) is True
+
+
+def test_heuristic_plan_for_official_document_trigger():
+    matches = [
+        SkillMatch(
+            skill_name="official-document-writing",
+            confidence=0.95,
+            match_type="trigger",
+            reason="匹配触发词: 写请示",
+        )
+    ]
+    query = "我写一份请示，向信息中心申请采购一台核心交换机"
+    plan = _build_heuristic_execution_plan(
+        query,
+        ["official-document-writing"],
+        matches,
+        None,
+    )
+    assert plan is not None
+    assert plan.skills[0].skill_name == "official-document-writing"
+    assert plan.skills[0].parameters.get("user_query") == query
+    assert plan.skills[0].parameters.get("document_type") == "请示"
+    assert not plan.fallback_to_rag

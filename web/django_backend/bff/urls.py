@@ -1,7 +1,7 @@
 from django.urls import path
 
 from . import auth
-from .views import chat, conversations, health, itsm, rag, skills, system, tasks, upload
+from .views import chat, conversations, health, itsm, knowledge, rag, skills, system, tasks, upload
 
 urlpatterns = [
     path("auth/login/", auth.bff_login, name="bff_login"),
@@ -44,4 +44,17 @@ urlpatterns = [
     path("skills/<str:skill_name>/toggle/", skills.proxy_skill_toggle, name="bff_skill_toggle"),
     path("skills/<str:skill_name>/reload/", skills.proxy_skill_reload, name="bff_skill_reload"),
     path("skills/<str:skill_name>/", skills.proxy_skill_detail, name="bff_skill_detail"),
+    path("knowledge/documents/", knowledge.proxy_knowledge_documents, name="bff_knowledge_documents"),
+    path(
+        "knowledge/documents/<path:doc_path>/content/",
+        knowledge.proxy_knowledge_document_content,
+        name="bff_knowledge_document_content",
+    ),
+    path(
+        "knowledge/documents/<path:doc_path>/",
+        knowledge.proxy_knowledge_document_detail,
+        name="bff_knowledge_document_detail",
+    ),
+    path("knowledge/stats/", knowledge.proxy_knowledge_stats, name="bff_knowledge_stats"),
+    path("knowledge/reindex/", knowledge.proxy_knowledge_reindex, name="bff_knowledge_reindex"),
 ]

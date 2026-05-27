@@ -1,33 +1,24 @@
 ﻿import React from 'react'
-import { Layout, Menu } from 'antd'
-import { MessageOutlined, AppstoreOutlined, DashboardOutlined } from '@ant-design/icons'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Layout } from 'antd'
+import NavMenu from './NavMenu'
 
 const { Sider } = Layout
 
-const menuItems = [
-  { key: '/chat', icon: React.createElement(MessageOutlined), label: 'Chat' },
-  { key: '/skills', icon: React.createElement(AppstoreOutlined), label: 'Skills' },
-  { key: '/status', icon: React.createElement(DashboardOutlined), label: 'Status' },
-]
-
+/** 桌面端左侧导航（手机端由 AppLayout 抽屉承载） */
 const AppSidebar: React.FC = () => {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const selectedKey = menuItems.find((item) => location.pathname.startsWith(item.key))?.key || '/chat'
-
   return (
-    <Sider width={200} theme="light" style={{ borderRight: '1px solid #e5e7eb', background: '#fff' }}>
-      <div style={{ padding: '20px 16px 8px', fontWeight: 700, fontSize: 16, color: '#111827' }}>
-        NetOps Agent
-      </div>
-      <Menu
-        mode="inline"
-        selectedKeys={[selectedKey]}
-        items={menuItems}
-        onClick={({ key }) => navigate(key)}
-        style={{ borderInlineEnd: 'none', marginTop: 8 }}
-      />
+    <Sider
+      width={200}
+      theme="light"
+      breakpoint="md"
+      collapsedWidth={0}
+      style={{
+        borderRight: '1px solid #e5e7eb',
+        background: '#fff',
+      }}
+      className="app-nav-sider"
+    >
+      <NavMenu />
     </Sider>
   )
 }

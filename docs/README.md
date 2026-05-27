@@ -11,21 +11,45 @@ NetOps Multi-Agent System 是一个基于大语言模型的智能运维助手系
 
 ---
 
+## 系统架构（与实现对齐）
+
+```mermaid
+flowchart LR
+    React[React :3000] --> Django[Django BFF :8001]
+    Django --> FastAPI[FastAPI :8000]
+    FastAPI --> LG[Supervisor v2]
+    LG -->|Skill| Celery[Celery Worker]
+    LG -->|知识问句| RAG[knowledge_qa]
+    RAG --> Chroma[(Chroma 本地)]
+    Chroma --- KB[(knowledge_base/)]
+    Celery --> RMQ[(RabbitMQ)]
+    Celery --> Redis[(Redis)]
+    Celery --> MinIO[(MinIO)]
+    FastAPI --> PG[(PostgreSQL)]
+```
+
+| 能力 | 实现 |
+|------|------|
+| 对话与 Agent 状态 | PostgreSQL + LangGraph checkpoint |
+| 知识库 RAG | **Chroma**（`vectorstore/chroma_db`），非 Qdrant |
+| 异步 Skill | Celery；Broker 多为 RabbitMQ，结果存 Redis |
+| 策略包下载 | MinIO 预签名 URL |
+
+完整架构图与端口说明见仓库根目录 [README.md](../README.md#系统架构)。
+
+---
+
 ## 快速开始
 
 ### 1. 启动服务
 
 ```powershell
-# 1. 启动Docker中间件
-cd deployment
-docker-compose up -d rabbitmq redis
-
-# 2. 启动Celery Worker
-python -m celery -A src.core.celery_tasks.celery_app worker --loglevel=info -P solo
-
-# 3. 启动FastAPI (新窗口)
-python -m uvicorn src.gateway.main:app --host 0.0.0.0 --port 8000 --reload
+# 推荐：一键启动中间件 + FastAPI + Django + React + Celery
+.\scripts\test\install.ps1   # 首次
+.\scripts\test\start.ps1
 ```
+
+或手动启动中间件与 Worker，见 [启动手册.md](启动手册.md)、[scripts/README.md](../scripts/README.md)。
 
 ### 2. 访问服务
 

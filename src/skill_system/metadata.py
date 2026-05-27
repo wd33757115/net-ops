@@ -76,7 +76,11 @@ class SkillMetadata(BaseModel):
     enabled: bool = Field(True, description="是否启用")
     hidden: bool = Field(False, description="是否隐藏（不显示在列表）")
     fallback_to_rag: bool = Field(True, description="失败时是否走 RAG")
-    celery_task: str | None = Field(None, description="关联的 Celery 任务名称（可选，按命名约定自动推导）")
+    celery_task: str | None = Field(None, description="关联的 Celery 任务（execution_mode=async 时）")
+    execution_mode: str = Field(
+        "async",
+        description="执行模式：sync（同步）或 async（Celery 异步，默认）",
+    )
 
     # 路径
     skill_path: str | None = Field(None, description="Skill 目录路径")

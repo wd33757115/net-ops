@@ -16,6 +16,7 @@ import {
 import { useQuery } from 'react-query'
 import { ReloadOutlined, MedicineBoxOutlined } from '@ant-design/icons'
 import { chatApi, skillApi, type DiagnosticsResponse, type ServiceCheck } from '../services/api'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const { Title, Text } = Typography
 
@@ -33,6 +34,7 @@ const overallColor: Record<string, string> = {
 }
 
 const StatusPage: React.FC = () => {
+  const isMobile = useIsMobile()
   const [diagEnabled, setDiagEnabled] = useState(false)
 
   const { data: health, isLoading: healthLoading, refetch: refetchHealth } = useQuery(
@@ -99,7 +101,7 @@ const StatusPage: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
+    <div style={{ padding: isMobile ? 12 : 24, height: '100%', overflow: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <Title level={3} style={{ marginBottom: 4 }}>

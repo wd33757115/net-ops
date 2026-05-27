@@ -136,6 +136,48 @@ class UnifiedRAGService:
             show_progress=True
         )
         print(f"[INFO] RAG Service index rebuilt: {len(documents)} docs -> {len(nodes)} nodes")
+        return len(documents), len(nodes)
+
+    def reindex_from_disk(self) -> dict[str, Any]:
+        """清空并重建向量索引（读取 knowledge_base/）。"""
+        if self._embed_model is None:
+            self._embed_model = SimpleEmbedding()
+
+        kb_path = Path("./knowledge_base")
+        persist_dir = Path("./vectorstore/chroma_db")
+        persist_dir.mkdir(parents=True, exist_ok=True)
+
+        chroma_client = chromadb.PersistentClient(path=str(persist_dir))
+        try:
+            chroma_client.delete_collection("netops_knowledge")
+        except Exception as exc:
+            print(f"[WARN] delete_collection: {exc}")
+
+        self._index = None
+        chroma_collection = chroma_client.get_or_create_collection("netops_knowledge")
+        vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        has_files = kb_path.exists() and any(
+            p.is_file() and p.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}
+            for p in kb_path.rglob("*")
+        )
+        if has_files:
+            doc_count, node_count = self._reindex_documents(kb_path, storage_context)
+        else:
+            kb_path.mkdir(parents=True, exist_ok=True)
+            self._index = VectorStoreIndex(
+                nodes=[],
+                storage_context=storage_context,
+                embed_model=self._embed_model,
+            )
+            doc_count, node_count = 0, 0
+
+        return {
+            "document_count": doc_count,
+            "chunk_count": node_count,
+            "message": f"索引已重建：{doc_count} 篇文档，{node_count} 个片段",
+        }
 
     def _infer_doc_type(self, filename: str) -> str:
         fname_lower = filename.lower()

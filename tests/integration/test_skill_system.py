@@ -39,7 +39,7 @@ try:
     from pathlib import Path
 
     # 测试解析现有的 SKILL.md
-    skill_md_path = root_dir / "src/skills-kagurananaga.official-document-writing-skill-master-05687d359a496a66dc0693973b5208475e1fca5d/SKILL.md"
+    skill_md_path = root_dir / "src/skills/official-document-writing/SKILL.md"
     if skill_md_path.exists():
         metadata = parse_skill_md(skill_md_path)
         print(f"   ✅ 解析成功!")

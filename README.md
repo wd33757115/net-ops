@@ -7,58 +7,106 @@
 ## 系统架构
 
 ```mermaid
-graph TB
-    User[用户] --&gt; React[React 前端]
-    User --&gt; Django[Django 后端]
-    Django --&gt; FastAPI[FastAPI 网关]
-    FastAPI --&gt; LangGraph[LangGraph Supervisor]
-    LangGraph --&gt; SkillEngine[Skill 系统引擎]
-    LangGraph --&gt; KnowledgeQA[知识问答 RAG]
-    
-    SkillEngine --&gt; SkillRegistry[Skill 注册器]
-    SkillEngine --&gt; SemanticRouter[语义路由]
-    SkillEngine --&gt; SkillLoader[Skill 加载器]
-    
-    SkillEngine --&gt; SkillExecutor[Skill 执行器]
-    SkillExecutor --&gt; Celery[Celery 任务]
-    Celery --&gt; Netmiko[Netmiko 设备操作]
-    
-    KnowledgeQA --&gt; ChromaDB[ChromaDB]
-    ChromaDB --&gt; KnowledgeBase[(知识库文件)]
-    
-    subgraph "中间件"
-        PostgreSQL[(PostgreSQL)]
-        Redis[(Redis)]
-        RabbitMQ[(RabbitMQ)]
-        MinIO[(MinIO)]
-        Qdrant[(Qdrant)]
+flowchart TB
+    subgraph Client["用户与展示层"]
+        User[用户浏览器]
+        React["React 前端 :3000"]
     end
-    
-    LangGraph --&gt; PostgreSQL
-    LangGraph --&gt; Redis
-    LangGraph --&gt; RabbitMQ
-    LangGraph --&gt; MinIO
-    LangGraph --&gt; Qdrant
+
+    subgraph BFF["BFF 层"]
+        Django["Django BFF :8001<br/>鉴权 / 限流 / API 代理"]
+    end
+
+    subgraph Gateway["API 网关"]
+        FastAPI["FastAPI :8000<br/>REST + WebSocket"]
+    end
+
+    subgraph SupervisorV2["Supervisor v2（LangGraph）"]
+        direction TB
+        Pre[pre_process<br/>Skill 匹配与指令加载]
+        Sup[supervisor<br/>ExecutionPlan]
+        Orch[orchestrator<br/>并行/顺序 fan-out]
+        Exec[skill_executor_v2]
+        Agg[final_aggregator]
+        KQA[knowledge_qa<br/>RAG 问答]
+        Pre --> Sup
+        Sup -->|触发词 / 运维动作| Orch
+        Sup -->|知识类问句| KQA
+        Orch --> Exec --> Agg
+    end
+
+    subgraph SkillSys["Skill 系统（SKILL.md）"]
+        Router[SemanticRouter<br/>触发词 / 语义匹配]
+        Loader[SkillLoader<br/>Progressive Disclosure]
+        Registry[SkillRegistry<br/>注册与执行]
+        Router --- Loader
+        Loader --- Registry
+    end
+
+    subgraph KB["知识库 RAG（当前实现）"]
+        KBDir[("knowledge_base/<br/>.md .txt .pdf .docx")]
+        Chroma[("Chroma 持久化<br/>vectorstore/chroma_db")]
+        KBDir -.建索引.-> Chroma
+        KQA --> Chroma
+    end
+
+    subgraph Async["异步执行"]
+        Worker[Celery Worker<br/>Windows: -P solo]
+        Tasks["tasks.py<br/>备份 / 巡检 / 防火墙策略等"]
+        Tools[tools / Netmiko]
+        Worker --> Tasks --> Tools
+    end
+
+    subgraph Middleware["Docker 中间件（scripts/test/start.ps1）"]
+        PG[("PostgreSQL<br/>对话与 checkpoint")]
+        Redis[("Redis<br/>Celery Result Backend")]
+        RMQ[("RabbitMQ<br/>Celery Broker")]
+        MinIO[("MinIO<br/>策略包 / 附件")]
+        Qdrant[("Qdrant<br/>可选 · 未接入 RAG")]
+    end
+
+    User --> React --> Django --> FastAPI
+    FastAPI --> Pre
+    Pre --> Router
+    Pre --> Loader
+    Exec --> Registry --> Worker
+    Tasks --> MinIO
+    FastAPI --> PG
+    Worker --> RMQ
+    Worker --> Redis
+    Django -.健康检查.-> FastAPI
 ```
+
+> **说明**：知识库向量检索使用**本机 Chroma**，不是 Qdrant。Compose 中的 Qdrant 仅用于健康诊断预留，业务代码未读写该服务。
 
 ## 架构说明
 
-### 前端展示层
-- **React 前端** - 现代化聊天界面（3000 端口）
-- **Django 后端** - API 代理和用户管理（8001 端口）
+### 用户与展示层
+| 组件 | 端口 | 职责 |
+|------|------|------|
+| React | 3000 | 聊天、Skill 管理、系统状态 |
+| Django BFF | 8001 | 统一 `/api` 入口、代理 FastAPI、WebSocket 转发 |
 
-### 核心服务层
-- **FastAPI 网关** - REST API + WebSocket 支持（8000 端口）
-- **LangGraph Supervisor** - 多代理协调器
-- **Skill 系统引擎** - 技能管理和执行
-- **知识问答 RAG** - 基于 ChromaDB 的检索增强生成
+### API 与编排层
+| 组件 | 端口 | 职责 |
+|------|------|------|
+| FastAPI | 8000 | Agent 图调用、对话 CRUD、RAG 检索、ITSM Webhook |
+| Supervisor v2 | — | `pre_process` → `supervisor` → `orchestrator` / `knowledge_qa` → 聚合；`USE_SUPERVISOR_V2=true`（默认） |
+| Skill 系统 | — | `SKILL.md` 元数据 + 触发词路由 + `skill_registry` 执行 |
+| RAG | — | LlamaIndex + **Chroma**；文档目录 `knowledge_base/` |
 
-### 中间件层
-- **PostgreSQL** - 主要数据库
-- **Redis** - 缓存和会话存储
-- **RabbitMQ** - 消息队列
-- **MinIO** - 对象存储
-- **Qdrant** - 向量数据库
+### 中间件（实际用途）
+| 组件 | 是否必需 | 用途 |
+|------|----------|------|
+| PostgreSQL | 推荐 | LangGraph checkpoint、对话消息持久化 |
+| RabbitMQ | Skill 异步任务 | Celery Broker（见 `.env` 中 `CELERY_BROKER_URL`） |
+| Redis | Skill 异步任务 | Celery Result Backend；FastAPI 连接池 |
+| MinIO | 防火墙策略等 | 生成结果 ZIP 预签名下载 |
+| Qdrant | **否** | 已随中间件启动，**当前 RAG 未使用** |
+
+### 请求路径示例
+- **「生成防火墙策略，工单号 rg001」** → 触发词匹配 → 规则调度 → `firewall-policy-generator` → Celery → MinIO 下载链接
+- **「交换机接口 down 了怎么办」** → 知识问句过滤 → `knowledge_qa` → Chroma 检索 → LLM 生成回答
 
 ## 内置 Skill（6 个）
 
@@ -107,13 +155,15 @@ pip install -r requirements.txt
 
 #### 2. 一键启动
 ```powershell
-.\start_all.ps1
+.\scripts\test\start.ps1
 ```
 
 #### 3. 一键停止
 ```powershell
-.\stop_all.ps1
+.\scripts\test\stop.ps1
 ```
+
+详见 [scripts/README.md](scripts/README.md)。
 
 ## 创建新 Skill
 
@@ -204,7 +254,7 @@ netops-agent/
 │   │   ├── cache.py           # LRU 缓存 (metadata/instructions/embedding)
 │   │   └── security.py        # 权限控制 + 审计日志
 │   ├── skills/                # 6 个内置 Skill (SKILL.md 文件驱动)
-│   ├── agents/supervisor/     # LangGraph Supervisor (3-Node StateGraph)
+│   ├── agents/supervisor/     # LangGraph Supervisor v1 / v2
 │   ├── common/                # logger / metrics / retry / tracing
 │   ├── core/                  # Celery tasks / RAG service
 │   ├── gateway/               # FastAPI + WebSocket
@@ -220,14 +270,13 @@ netops-agent/
 ├── docs/                      # 文档 + ADR
 │   ├── adr/                   # 架构决策记录
 │   └── SKILL_CREATION_GUIDE.md
-├── knowledge_base/            # RAG 知识库文件
+├── knowledge_base/            # RAG 原始文档（更新后需重建 Chroma 索引）
+├── vectorstore/chroma_db/     # RAG 向量库（Chroma 持久化）
+├── scripts/test/              # 测试环境 install / start / stop
 ├── deployment/                # Docker 配置
 │   ├── docker-compose.yml
-│   ├── Dockerfile.fastapi
-│   ├── Dockerfile.django
-│   └── Dockerfile.react
-├── start_all.ps1              # 一键启动脚本
-└── stop_all.ps1               # 一键停止脚本
+│   └── docker-compose.middleware.yml
+└── .runtime/test/logs/        # 本地启动日志（FastAPI / Celery / React）
 ```
 
 ## 测试
@@ -254,12 +303,18 @@ python scripts/validate_skill.py --all        # 所有 Skill 通过
 - **文件系统驱动** — Skill = 目录 + SKILL.md（Git 版本管理友好）
 - **3 层容错** — 加载失败 → 降级, 路由失败 → RAG 兜底, 执行异常 → RAG 兜底
 
+## 知识库更新
+
+1. 将文档放入 `knowledge_base/`（支持 `.md` / `.txt` / `.pdf` / `.docx`）。
+2. 删除 `vectorstore/chroma_db/` 后重启 FastAPI，触发重新建索引。
+3. 用 `POST /api/v1/rag/search` 或聊天中的知识问句验证。
+
 ## 文档
 
 - [Skill 创建指南](docs/SKILL_CREATION_GUIDE.md)
 - [架构决策记录](docs/adr/)
 - [启动手册](docs/启动手册.md)
-- [测试手册](docs/测试手册.md)
+- [部署脚本说明](scripts/README.md)
 - [Web 开发文档](web/README.md)
 
 ## License

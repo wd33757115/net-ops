@@ -1,16 +1,17 @@
 """
-公文写作技能 - 专业的党政机关公文写作指南
+公文写作技能业务逻辑（official-document-writing Skill 执行入口）。
 
 来源：https://github.com/kagurananaga/official-document-writing-skill
 """
 
+import json
 import time
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from src.skills.registry import skill_registry
+from src.skills.official_document.schema import OfficialDocumentJSON
 
 
 # ==================== 1. 定义参数模型 ====================
@@ -51,10 +52,8 @@ def get_document_llm():
 
 # ==================== 3. 读取参考文档 ====================
 def get_skill_base_path() -> Path:
-    """获取技能目录路径"""
-    current_file = Path(__file__).resolve()
-    # 从 skills/examples 回到 src 目录
-    return current_file.parent.parent.parent / "skills-kagurananaga.official-document-writing-skill-master-05687d359a496a66dc0693973b5208475e1fca5d"
+    """获取 SKILL.md 资源目录（references / checklists）。"""
+    return Path(__file__).resolve().parent.parent / "official-document-writing"
 
 
 def read_reference_file(relative_path: str) -> str:
@@ -124,142 +123,46 @@ def generate_docx_from_content(content: str, document_type: str) -> bytes:
     - 层次标题：一、黑体；（一）楷体；1.、1. 仿宋
     """
     from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.shared import Cm, Pt
 
-    # 创建文档
+    from src.skills.official_document.docx_format import (
+        add_styled_paragraph,
+        setup_a4_margins,
+    )
+
     doc = Document()
+    setup_a4_margins(doc)
 
-    # 设置页面边距（GB/T 9704-2012 要求）
-    sections = doc.sections
-    for section in sections:
-        # 天头（上白边）：37mm
-        section.top_margin = Cm(3.7)
-        # 订口（左白边）：28mm
-        section.left_margin = Cm(2.8)
-        # 右白边：26mm
-        section.right_margin = Cm(2.6)
-        # 地脚（下白边）：35mm
-        section.bottom_margin = Cm(3.5)
-
-    # 解析内容
-    lines = content.strip().split('\n')
-    current_paragraph = None
+    lines = content.strip().split("\n")
+    is_first_block = True
 
     for line in lines:
         line = line.strip()
         if not line:
-            # 空行
-            current_paragraph = doc.add_paragraph()
-            current_paragraph.paragraph_format.line_spacing = 28
+            doc.add_paragraph()
             continue
 
-        # 检测是否为标题行（发文机关、无正文内容行等）
-        if is_title_line(line, current_paragraph is None):
-            # 发文机关标题
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(line)
-            run.font.name = '仿宋_GB2312'
-            run.font.size = Pt(16)
-            run.font.bold = True
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
-            p.paragraph_format.line_spacing = 28
-            p.paragraph_format.space_after = Pt(0)
-            current_paragraph = p
-
+        if is_title_line(line, is_first_block):
+            add_styled_paragraph(doc, line, center=True, bold=True)
+            is_first_block = False
         elif is_document_title(line):
-            # 公文标题（如：关于xxx的请示）
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(line)
-            run.font.name = '仿宋_GB2312'
-            run.font.size = Pt(16)
-            run.font.bold = True
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
-            p.paragraph_format.line_spacing = 28
-            p.paragraph_format.space_after = Pt(0)
-            current_paragraph = p
-
+            add_styled_paragraph(doc, line, center=True, bold=True)
         elif is_main_recipient(line):
-            # 主送机关
-            p = doc.add_paragraph()
-            run = p.add_run(line)
-            run.font.name = '仿宋_GB2312'
-            run.font.size = Pt(16)
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
-            p.paragraph_format.line_spacing = 28
-            p.paragraph_format.space_after = Pt(0)
-            p.paragraph_format.first_line_indent = Cm(0.74)  # 首行缩进2字符
-            current_paragraph = p
-
+            add_styled_paragraph(doc, line)
         elif is_first_level_heading(line):
-            # 一级标题：一、
-            p = doc.add_paragraph()
-            run = p.add_run(line)
-            run.font.name = '仿宋_GB2312'
-            run.font.size = Pt(16)
-            run.font.bold = True
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
-            p.paragraph_format.line_spacing = 28
-            p.paragraph_format.space_after = Pt(0)
-            p.paragraph_format.first_line_indent = Cm(0.74)
-            current_paragraph = p
-
+            add_styled_paragraph(doc, line, first_line_indent=0.74, bold=True)
         elif is_second_level_heading(line):
-            # 二级标题：（一）
-            p = doc.add_paragraph()
-            run = p.add_run(line)
-            run.font.name = '仿宋_GB2312'
-            run.font.size = Pt(16)
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
-            p.paragraph_format.line_spacing = 28
-            p.paragraph_format.space_after = Pt(0)
-            p.paragraph_format.first_line_indent = Cm(0.74)
-            current_paragraph = p
-
+            add_styled_paragraph(doc, line, first_line_indent=0.74)
         elif is_closing_line(line):
-            # 结束语（妥否，请批示等）
-            p = doc.add_paragraph()
-            run = p.add_run(line)
-            run.font.name = '仿宋_GB2312'
-            run.font.size = Pt(16)
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
-            p.paragraph_format.line_spacing = 28
-            p.paragraph_format.space_after = Pt(0)
-            current_paragraph = p
-
+            add_styled_paragraph(doc, line)
         elif is_signature(line):
-            # 署名和日期
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            run = p.add_run(line)
-            run.font.name = '仿宋_GB2312'
-            run.font.size = Pt(16)
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
-            p.paragraph_format.line_spacing = 28
-            p.paragraph_format.space_after = Pt(0)
-            current_paragraph = p
-
+            add_styled_paragraph(doc, line, right=True)
         else:
-            # 普通正文
-            p = doc.add_paragraph()
-            run = p.add_run(line)
-            run.font.name = '仿宋_GB2312'
-            run.font.size = Pt(16)
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
-            p.paragraph_format.line_spacing = 28
-            p.paragraph_format.space_after = Pt(0)
-            p.paragraph_format.first_line_indent = Cm(0.74)  # 首行缩进2字符
-            current_paragraph = p
+            add_styled_paragraph(doc, line, first_line_indent=0.74)
 
-    # 保存到 BytesIO
     import io
     docx_buffer = io.BytesIO()
     doc.save(docx_buffer)
     docx_buffer.seek(0)
-
     return docx_buffer.getvalue()
 
 
@@ -367,77 +270,104 @@ def upload_document_to_minio(file_data: bytes, filename: str) -> str:
         return None
 
 
-# ==================== 6. LLM 生成公文 ====================
-async def generate_document_with_llm(
+# ==================== 6. LLM 生成结构化 JSON ====================
+async def generate_document_json_with_llm(
     document_type: str,
     purpose: str,
     user_query: str,
     templates: str,
-    gb_standard: str
-) -> str:
-    """
-    使用 LLM 生成完整的公文内容
-    """
+    gb_standard: str,
+) -> OfficialDocumentJSON | None:
+    """使用 LLM 结构化输出公文 JSON（必须可被渲染脚本消费）。"""
     llm = get_document_llm()
+    structured_llm = llm.with_structured_output(OfficialDocumentJSON, method="function_calling")
 
-    # 构建 prompt
-    prompt = f"""你是一位专业的党政机关公文写作专家，擅长撰写符合《GB/T 9704-2012》标准的公文。
+    prompt = f"""你是党政机关公文写作专家。请根据用户需求生成**可直接渲染为 Word 文档**的结构化 JSON。
 
 ## 用户需求
 {user_query}
 
-## 公文类型
+## 文种
 {document_type}
 
-## 公文用途/背景
-{purpose}
+## 用途/背景
+{purpose or '（从用户需求推断）'}
 
-## 公文模板参考
-{templates[:3000]}  # 限制长度
+## 模板参考（节选）
+{templates[:2500]}
 
-## GB/T 9704-2012 格式规范
-{gb_standard[:2000] if gb_standard else '请遵循党政机关公文格式规范'}
+## 格式规范（节选）
+{(gb_standard or '遵循 GB/T 9704-2012')[:1500]}
 
-## 写作要求
-1. 严格按照公文格式规范撰写
-2. 语言正式严谨，表述准确
-3. 内容有理有据，贴合实际
-4. 结构清晰，层次分明
-5. 篇幅适中，详略得当
-
-## 输出要求
-请直接输出完整的公文内容，不要包含任何解释性文字。公文格式示例：
-
-```
-[发文机关]
-关于 [事由] 的 {document_type}
-
-[主送机关]：
-
-[正文内容]
-...
-
-[结尾语]
-妥否，请批示。
-
-[发文机关署名]
-[成文日期]
-```
-
-请立即开始撰写："""
+## 硬性要求
+1. 必须输出完整 JSON 对象，字段齐全、内容具体，禁止占位符如「XXX」「待补充」
+2. title 格式：「关于……的{document_type}」
+3. main_body.opening 写依据与背景；sections 至少 1 节；closing 使用规范结尾语
+4. signature.date 使用中文日期，如 2026年5月24日
+5. 不要输出 Markdown 或解释文字，只输出 JSON 结构
+"""
 
     try:
         t_start = time.time()
-        response = await llm.ainvoke(prompt)
+        result = await structured_llm.ainvoke(prompt)
         elapsed = time.time() - t_start
-
-        print(f"   [Document Generation] LLM took {elapsed:.1f}s")
-
-        return response.content if hasattr(response, 'content') else str(response)
-
+        print(f"   [Document JSON] LLM took {elapsed:.1f}s")
+        if isinstance(result, OfficialDocumentJSON):
+            return result
+        return OfficialDocumentJSON.model_validate(result)
     except Exception as e:
-        print(f"   [Document Generation] LLM Error: {e}")
-        # 如果 LLM 调用失败，返回模板提示
+        print(f"   [Document JSON] structured output failed: {e}")
+        return _parse_document_json_from_text(
+            await _generate_document_json_fallback_text(
+                document_type, purpose, user_query, templates, gb_standard
+            )
+        )
+
+
+async def _generate_document_json_fallback_text(
+    document_type: str,
+    purpose: str,
+    user_query: str,
+    templates: str,
+    gb_standard: str,
+) -> str | None:
+    """结构化输出失败时的 JSON 文本兜底。"""
+    llm = get_document_llm()
+    from src.skills.official_document.schema import OfficialDocumentJSON
+
+    schema_hint = OfficialDocumentJSON.model_json_schema()
+    prompt = f"""请仅输出一个 JSON 对象（不要 markdown 代码块），Schema 如下：
+{json.dumps(schema_hint, ensure_ascii=False)}
+
+用户需求：{user_query}
+文种：{document_type}
+用途：{purpose or '无'}
+
+模板参考：{templates[:1500]}
+"""
+    try:
+        response = await llm.ainvoke(prompt)
+        return response.content if hasattr(response, "content") else str(response)
+    except Exception as e:
+        print(f"   [Document JSON] fallback LLM error: {e}")
+        return None
+
+
+def _parse_document_json_from_text(text: str | None) -> OfficialDocumentJSON | None:
+    if not text:
+        return None
+    import json
+    import re
+
+    from src.skills.official_document.schema import OfficialDocumentJSON
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        return OfficialDocumentJSON.model_validate(json.loads(match.group()))
+    except Exception as e:
+        print(f"   [Document JSON] parse error: {e}")
         return None
 
 
@@ -529,111 +459,61 @@ async def write_document(
     templates: str,
     gb_standard: str
 ) -> dict[str, Any]:
-    """撰写公文"""
+    """撰写公文：LLM 结构化 JSON → 渲染 DOCX → 上传 MinIO（同步链路）。"""
 
-    print(f"   [Document Writing] Generating {document_type}...")
+    print(f"   [Document Writing] Generating {document_type} (sync + JSON)...")
 
-    # 调用 LLM 生成公文
-    document_content = await generate_document_with_llm(
+    document_json = await generate_document_json_with_llm(
         document_type=document_type,
         purpose=purpose,
         user_query=user_query,
         templates=templates,
-        gb_standard=gb_standard
+        gb_standard=gb_standard,
     )
 
-    if document_content:
-        # 生成 DOCX 文件
-        print("   [Document Writing] Generating DOCX file...")
-        try:
-            docx_data = generate_docx_from_content(document_content, document_type)
-
-            # 生成文件名
-            import datetime
-            timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-            filename = f"{document_type}_{timestamp}.docx"
-
-            # 上传到 MinIO
-            download_url = upload_document_to_minio(docx_data, filename)
-
-            if download_url:
-                print("   [Document Writing] DOCX uploaded successfully")
-
-            # 返回结果
-            return {
-                "success": True,
-                "message": "公文撰写完成",
-                "data": {
-                    "document_type": document_type,
-                    "purpose": purpose,
-                    "action": "write",
-                    "document_content": document_content,
-                    "workflow": ["需求确认", "文种选择", "模板应用", "内容写作", "质量检查"],
-                    "reference_files": [
-                        "references/document-templates.md",
-                        "references/gb-t-9704-2012-standard.md"
-                    ],
-                    "compliance_notes": [
-                        "已遵循 GB/T 9704-2012 格式规范",
-                        "语言正式严谨，表述准确",
-                        "结构清晰，层次分明"
-                    ]
-                },
-                "download_url": download_url  # 添加下载链接
-            }
-
-        except Exception as e:
-            print(f"   [Document Writing] DOCX generation failed: {e}")
-            import traceback
-            traceback.print_exc()
-
-            # 如果 DOCX 生成失败，仍然返回文本内容
-            return {
-                "success": True,
-                "message": "公文撰写完成（DOCX生成失败，请使用文本内容）",
-                "data": {
-                    "document_type": document_type,
-                    "purpose": purpose,
-                    "action": "write",
-                    "document_content": document_content,
-                    "workflow": ["需求确认", "文种选择", "模板应用", "内容写作", "质量检查"],
-                    "reference_files": [
-                        "references/document-templates.md",
-                        "references/gb-t-9704-2012-standard.md"
-                    ],
-                    "compliance_notes": [
-                        "已遵循 GB/T 9704-2012 格式规范",
-                        "语言正式严谨，表述准确",
-                        "结构清晰，层次分明"
-                    ]
-                }
-            }
-    else:
-        # LLM 生成失败，返回模板提示
+    if not document_json:
         return {
-            "success": True,
-            "message": f"已为您准备{document_type}的写作模板，请参考以下内容：",
-            "data": {
-                "document_type": document_type,
-                "purpose": purpose,
-                "action": "write",
-                "workflow": ["需求确认", "文种选择", "模板应用", "内容写作", "质量检查"],
-                "reference_files": [
-                    "references/document-templates.md",
-                    "references/gb-t-9704-2012-standard.md",
-                    "references/writing-techniques.md",
-                    "checklists/quality-checklist.md"
-                ],
-                "tips": [
-                    "先规划后写作：明确目的、对象、文种",
-                    "善用模板：在模板基础上个性化修改",
-                    "重视依据：政策依据、事实依据要充分",
-                    "简洁明了：删繁就简，直截了当",
-                    "多查多改：初稿完成后多次检查修改",
-                    "对标对表：对照清单逐项检查"
-                ]
-            }
+            "success": False,
+            "message": "公文内容生成失败：LLM 未返回有效 JSON",
+            "error": "invalid_document_json",
         }
+
+    from src.skills.official_document.render import render_document_bytes
+
+    print("   [Document Writing] Rendering DOCX from JSON...")
+    try:
+        docx_data = render_document_bytes(document_json)
+    except Exception as e:
+        print(f"   [Document Writing] Render failed: {e}")
+        return {
+            "success": False,
+            "message": f"公文渲染失败: {e}",
+            "error": str(e),
+            "data": {"document_json": document_json.model_dump()},
+        }
+
+    import datetime
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    filename = f"{document_json.doc_type}_{timestamp}.docx"
+    download_url = upload_document_to_minio(docx_data, filename)
+
+    flat_text = document_json.to_render_context().get("main_body_text", "")
+    preview = f"{document_json.title}\n\n{flat_text}\n\n{document_json.signature.org}\n{document_json.signature.date}"
+
+    return {
+        "success": True,
+        "message": "公文撰写完成，已生成可下载 Word 文档",
+        "data": {
+            "document_type": document_json.doc_type,
+            "purpose": purpose,
+            "action": "write",
+            "document_json": document_json.model_dump(),
+            "document_content": preview,
+            "workflow": ["需求确认", "JSON 生成", "模板渲染", "DOCX 上传", "返回下载链接"],
+        },
+        "download_url": download_url,
+    }
 
 
 async def review_document(
@@ -815,60 +695,18 @@ async def guide_document(
         }
 
 
-# ==================== 6. 注册技能 ====================
-def register_skill():
-    """
-    注册公文写作技能
-    """
-    from src.skills.skill_base import BaseSkill, SkillResult
-
-    class OfficialDocumentWritingSkill(BaseSkill):
-        async def execute(self, **kwargs) -> SkillResult:
-            result = await official_document_writing_handler(kwargs)
-            return SkillResult(**result)
-
-    skill = OfficialDocumentWritingSkill(
-        name="official_document_writing",  # 技能名称（唯一标识）
-        description="专业的党政机关公文写作助手。当用户需要撰写、修改或审核党政机关公文（如请示、通知、函、总结、纪要等）时使用。提供GB/T 9704-2012格式规范指导、常用公文模板、语言规范建议和公文质量检查。支持直接生成符合规范的完整公文。",
-        parameters=OfficialDocumentWritingParams,
-        handler=official_document_writing_handler,
-        category="general",  # 分类：network, security, general 等
-        tags=["公文写作", "党政机关", "请示", "通知", "函", "总结", "纪要", "报告", "GB/T 9704-2012"],  # 标签
-        fallback_to_rag_if_fail=True,  # 失败时是否走 RAG
-        enabled=True  # 是否启用
-    )
-
-    skill_registry.register_skill(skill)
-
-
-# ==================== 7. 测试入口 ====================
 if __name__ == "__main__":
     import asyncio
 
     async def test():
-        register_skill()
-        skill = skill_registry.get_skill("official_document_writing")
-        if skill:
-            print(f"✅ 技能注册成功: {skill.name}")
-            print(f"   描述: {skill.description[:50]}...")
-            print(f"   分类: {skill.category}")
-            print(f"   标签: {skill.tags}")
-
-            # 测试生成公文
-            print("\n--- 测试生成公文 ---")
-            result = await skill.execute(
-                document_type="请示",
-                purpose="申请采购新的网络设备",
-                user_query="帮我写一份请示，向信息中心申请采购一台新的核心交换机",
-                action="write"
-            )
-            print(f"Result: {result.success}")
-            print(f"Message: {result.message}")
-            if hasattr(result, 'data') and result.data:
-                content = result.data.get('document_content', 'N/A')
-                print(f"Content Preview: {content[:200]}...")
-
-        else:
-            print("❌ 技能注册失败")
+        result = await official_document_writing_handler(
+            {
+                "document_type": "请示",
+                "purpose": "申请采购新的网络设备",
+                "user_query": "帮我写一份请示，向信息中心申请采购一台新的核心交换机",
+                "action": "write",
+            }
+        )
+        print(f"success={result.get('success')} message={result.get('message', '')[:80]}")
 
     asyncio.run(test())

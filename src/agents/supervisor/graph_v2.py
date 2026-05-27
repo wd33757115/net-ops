@@ -2,9 +2,7 @@
 Supervisor v2 — 高级协同模式
 
 架构：pre_process → supervisor(ExecutionPlan) → orchestrator(Send fan-out)
-      → skill_executor_v2(Map) → final_aggregator(Reduce) → END
-
-与 v1 graph.py 并行存在，通过 USE_SUPERVISOR_V2 环境变量切换。
+      → skill_executor_v2(Map) → final_aggregator(Reduce) / knowledge_qa → END
 """
 
 from __future__ import annotations
@@ -145,6 +143,17 @@ def _is_knowledge_question(query: str) -> bool:
         r"ticket[_\s-]?id",
         r"下发",
         r"生成.{0,6}策略",
+        r"公文",
+        r"写.{0,4}请示",
+        r"写.{0,4}通知",
+        r"写.{0,4}函",
+        r"写.{0,4}报告",
+        r"写.{0,4}总结",
+        r"写.{0,4}纪要",
+        r"一份请示",
+        r"一份通知",
+        r"公文写作",
+        r"公文审核",
     ]
     if any(re.search(p, q, re.IGNORECASE) for p in operational_patterns):
         return False
@@ -222,6 +231,13 @@ def _build_heuristic_execution_plan(
         params["ticket_id"] = ticket_id
     if uploaded_file_path:
         params["policy_file_url"] = uploaded_file_path
+    if primary == "official-document-writing":
+        params.setdefault("user_query", query)
+        params.setdefault("action", "write")
+        for doc_type in ("请示", "通知", "函", "报告", "总结", "纪要", "决定"):
+            if doc_type in query:
+                params.setdefault("document_type", doc_type)
+                break
 
     match = matches_by_name.get(primary)
     reason = match.reason if match else "已加载 Skill 指令"
@@ -254,17 +270,93 @@ def _merge_params_with_deps(
     return params
 
 
-def _deps_satisfied(task: SkillTaskSpec, completed: set[str]) -> bool:
-    return all(dep in completed for dep in task.depends_on)
+def _successful_deps(task: SkillTaskSpec, intermediate: dict[str, Any] | None) -> bool:
+    """前置依赖必须已成功执行。"""
+    intermediate = intermediate or {}
+    for dep in task.depends_on:
+        dep_result = intermediate.get(dep)
+        if not isinstance(dep_result, dict) or not dep_result.get("success"):
+            return False
+    return True
 
 
-def _next_runnable_task(tasks: list[SkillTaskSpec], completed: set[str]) -> SkillTaskSpec | None:
+def _deps_satisfied(
+    task: SkillTaskSpec,
+    completed: set[str],
+    intermediate: dict[str, Any] | None = None,
+) -> bool:
+    if not all(dep in completed for dep in task.depends_on):
+        return False
+    return _successful_deps(task, intermediate)
+
+
+def _detect_dependency_cycle(tasks: list[SkillTaskSpec]) -> bool:
+    graph: dict[str, list[str]] = {t.skill_name: list(t.depends_on) for t in tasks}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def dfs(node: str) -> bool:
+        if node in visiting:
+            return True
+        if node in visited:
+            return False
+        visiting.add(node)
+        for dep in graph.get(node, []):
+            if dep not in graph:
+                continue
+            if dfs(dep):
+                return True
+        visiting.remove(node)
+        visited.add(node)
+        return False
+
+    return any(dfs(name) for name in graph)
+
+
+def _next_runnable_task(
+    tasks: list[SkillTaskSpec],
+    completed: set[str],
+    intermediate: dict[str, Any] | None = None,
+) -> SkillTaskSpec | None:
     for task in tasks:
         if task.skill_name in completed:
             continue
-        if _deps_satisfied(task, completed):
+        if _deps_satisfied(task, completed, intermediate):
             return task
     return None
+
+
+def _parallel_runnable_tasks(
+    pending: list[SkillTaskSpec],
+    completed: set[str],
+    intermediate: dict[str, Any] | None,
+) -> list[SkillTaskSpec]:
+    return [t for t in pending if _deps_satisfied(t, completed, intermediate)]
+
+
+def _should_fallback_to_rag_after_skills(state: SupervisorStateV2) -> bool:
+    """全部 Skill 失败且计划或 Skill 元数据允许 RAG 兜底。"""
+    plan = state.get("execution_plan")
+    intermediate = state.get("intermediate_results") or {}
+    if not plan or not intermediate:
+        return False
+
+    tasks = _filter_conditional_tasks(plan, state)
+    executed = [t for t in tasks if t.skill_name in intermediate]
+    if not executed:
+        return False
+
+    if any(intermediate.get(t.skill_name, {}).get("success") for t in executed):
+        return False
+
+    if plan.fallback_to_rag:
+        return True
+
+    for task in executed:
+        skill = skill_registry.get_skill(task.skill_name)
+        if skill and skill.fallback_to_rag_if_fail:
+            return True
+    return False
 
 
 def _filter_conditional_tasks(plan: ExecutionPlan, state: SupervisorStateV2) -> list[SkillTaskSpec]:
@@ -475,7 +567,12 @@ def orchestrator_dispatch(state: SupervisorStateV2):
         print("[Supervisor v2] orchestrator: 无可执行任务 → final_aggregator")
         return "final_aggregator"
 
+    if _detect_dependency_cycle(tasks):
+        logger.error("[Supervisor v2] orchestrator: 检测到 depends_on 循环依赖")
+        return "final_aggregator"
+
     completed = set((state.get("intermediate_results") or {}).keys())
+    intermediate = state.get("intermediate_results") or {}
 
     if plan.execution_mode == "parallel":
         pending = [t for t in tasks if t.skill_name not in completed]
@@ -485,13 +582,23 @@ def orchestrator_dispatch(state: SupervisorStateV2):
                 "跳过 fan-out（若为本轮新消息仍出现，请确认 pre_process 已清空 checkpoint）"
             )
             return "final_aggregator"
-        print(f"[Supervisor v2] orchestrator fan-out 并行执行 {len(pending)} 个 Skill")
-        increment_counter("supervisor_v2_orchestrator_fanout_total", tags={"mode": "parallel", "count": str(len(pending))})
-        return [Send("skill_executor_v2", _build_send_payload(state, task)) for task in pending]
+
+        runnable = _parallel_runnable_tasks(pending, completed, intermediate)
+        if not runnable:
+            print("[Supervisor v2] orchestrator: 并行任务被依赖阻塞或前置失败 → final_aggregator")
+            return "final_aggregator"
+
+        print(f"[Supervisor v2] orchestrator fan-out 并行执行 {len(runnable)} 个 Skill")
+        increment_counter(
+            "supervisor_v2_orchestrator_fanout_total",
+            tags={"mode": "parallel", "count": str(len(runnable))},
+        )
+        return [Send("skill_executor_v2", _build_send_payload(state, task)) for task in runnable]
 
     next_task = _next_runnable_task(
         [t for t in tasks if t.skill_name not in completed],
         completed,
+        intermediate,
     )
     if not next_task:
         return "final_aggregator"
@@ -564,13 +671,25 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
 
 
 def route_after_executor_v2(state: SupervisorStateV2) -> str:
+    if _should_fallback_to_rag_after_skills(state):
+        print("[Supervisor v2] 全部 Skill 失败，回退 knowledge_qa")
+        return "knowledge_qa"
+
     plan = state.get("execution_plan")
-    if not plan or plan.execution_mode == "parallel":
+    if not plan:
         return "final_aggregator"
+
     completed = set((state.get("intermediate_results") or {}).keys())
+    intermediate = state.get("intermediate_results") or {}
     tasks = _filter_conditional_tasks(plan, state)
     pending = [t for t in tasks if t.skill_name not in completed]
-    if pending and _next_runnable_task(pending, completed):
+
+    if plan.execution_mode == "parallel":
+        if pending and _parallel_runnable_tasks(pending, completed, intermediate):
+            return "orchestrator"
+        return "final_aggregator"
+
+    if pending and _next_runnable_task(pending, completed, intermediate):
         return "orchestrator"
     return "final_aggregator"
 
@@ -670,7 +789,11 @@ def build_supervisor_graph_v2(checkpointer=None):
     workflow.add_conditional_edges(
         "skill_executor_v2",
         route_after_executor_v2,
-        {"orchestrator": "orchestrator", "final_aggregator": "final_aggregator"},
+        {
+            "orchestrator": "orchestrator",
+            "final_aggregator": "final_aggregator",
+            "knowledge_qa": "knowledge_qa",
+        },
     )
     workflow.add_edge("final_aggregator", END)
     workflow.add_edge("knowledge_qa", END)

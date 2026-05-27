@@ -95,6 +95,57 @@ export interface SkillStats {
   skills?: Array<{ name: string; category: string; enabled: boolean }>
 }
 
+export interface KnowledgeDocument {
+  id: string
+  file_name: string
+  relative_path: string
+  size_bytes: number
+  updated_at: string
+  doc_type: string
+  category: string
+  indexed: boolean
+  chunk_count: number
+}
+
+export interface KnowledgeStats {
+  document_count: number
+  indexed_document_count: number
+  indexed_chunks: number
+  kb_path: string
+  vector_store: string
+  collection: string
+  supported_extensions?: string[]
+}
+
+export interface KnowledgeReindexResponse {
+  success: boolean
+  document_count?: number
+  chunk_count?: number
+  message?: string
+}
+
+export interface KnowledgeDocumentPreview {
+  success: boolean
+  id: string
+  file_name: string
+  relative_path: string
+  size_bytes: number
+  preview_type: 'text' | 'extracted' | 'binary'
+  content_type: string
+  content: string
+  download_base64?: string
+  truncated?: boolean
+  message?: string
+}
+
+export interface KnowledgeUploadRequest {
+  filename: string
+  file_content: string
+  folder?: string
+  relative_path?: string
+  auto_reindex?: boolean
+}
+
 export const chatApi = {
   sendMessage: async (data: ChatRequest): Promise<ChatResponse> => {
     const response = await api.post<ChatResponse>('/chat/', data)
@@ -206,6 +257,41 @@ export const skillApi = {
     const response = await api.delete(`/skills/${name}/`)
     return response.data
   },
+}
+
+export const knowledgeApi = {
+  listDocuments: async (): Promise<KnowledgeDocument[]> => {
+    const response = await api.get<KnowledgeDocument[]>('/knowledge/documents/')
+    return response.data
+  },
+  getStats: async (): Promise<KnowledgeStats> => {
+    const response = await api.get<KnowledgeStats>('/knowledge/stats/')
+    return response.data
+  },
+  reindex: async (): Promise<KnowledgeReindexResponse> => {
+    const response = await api.post<KnowledgeReindexResponse>('/knowledge/reindex/')
+    return response.data
+  },
+  getPreview: async (relativePath: string): Promise<KnowledgeDocumentPreview> => {
+    const path = encodeKnowledgePath(relativePath)
+    const response = await api.get<KnowledgeDocumentPreview>(`/knowledge/documents/${path}/content/`)
+    return response.data
+  },
+  upload: async (data: KnowledgeUploadRequest) => {
+    const response = await api.post('/knowledge/documents/', data)
+    return response.data
+  },
+  delete: async (relativePath: string, autoReindex = true) => {
+    const path = encodeKnowledgePath(relativePath)
+    const response = await api.delete(`/knowledge/documents/${path}/`, {
+      params: { auto_reindex: autoReindex },
+    })
+    return response.data
+  },
+}
+
+function encodeKnowledgePath(relativePath: string): string {
+  return relativePath.split('/').map(encodeURIComponent).join('/')
 }
 
 export const wsApi = {

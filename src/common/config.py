@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "NetOps-MultiAgent"
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
-    USE_SUPERVISOR_V2: bool = False
+    USE_SUPERVISOR_V2: bool = True
 
     @property
     def postgres_url(self) -> str:

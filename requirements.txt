@@ -33,6 +33,7 @@ prometheus-client>=0.20.*
 alembic>=1.13.*
 
 python-docx>=1.1.0
+docxtpl>=0.16.7
 
 pyyaml>=6.0
 

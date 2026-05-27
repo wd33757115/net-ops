@@ -1,3 +1,9 @@
+"""
+Supervisor v1（已废弃，仅保留供历史测试参考）。
+
+运行时入口请使用 graph_v2.compiled_graph_v2()。
+"""
+
 import sys
 from pathlib import Path
 from typing import Annotated, Literal, TypedDict

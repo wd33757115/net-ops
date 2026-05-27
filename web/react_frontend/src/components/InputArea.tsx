@@ -8,9 +8,10 @@ const { TextArea } = Input
 interface InputAreaProps {
   onSend: (text: string) => void
   loading: boolean
+  compact?: boolean
 }
 
-const InputArea: React.FC<InputAreaProps> = ({ onSend, loading }) => {
+const InputArea: React.FC<InputAreaProps> = ({ onSend, loading, compact }) => {
   const [text, setText] = useState('')
   const { uploadedFile, setUploadedFile } = useChatStore()
 
@@ -29,11 +30,15 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, loading }) => {
   }
 
   return (
-    <div style={{ 
-      padding: '16px 24px 24px',
-      borderTop: '1px solid #e5e7eb',
-      background: '#ffffff'
-    }}>
+    <div
+      className="chat-input-area"
+      style={{
+        padding: compact ? '10px 12px calc(12px + env(safe-area-inset-bottom))' : '16px 24px 24px',
+        borderTop: '1px solid #e5e7eb',
+        background: '#ffffff',
+        flexShrink: 0,
+      }}
+    >
       {uploadedFile && (
         <div style={{ 
           display: 'flex', 
@@ -78,14 +83,18 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, loading }) => {
               boxShadow: '0 1px 3px rgba(0,0,0,0.06)'
             }}
           />
-          <div style={{ 
-            textAlign: 'right', 
-            fontSize: '12px', 
-            color: '#9ca3af',
-            marginTop: '4px'
-          }}>
-            Enter 发送 · Shift + Enter 换行
-          </div>
+          {!compact && (
+            <div
+              style={{
+                textAlign: 'right',
+                fontSize: 12,
+                color: '#9ca3af',
+                marginTop: 4,
+              }}
+            >
+              Enter 发送 · Shift + Enter 换行
+            </div>
+          )}
         </div>
 
         <Button
@@ -95,14 +104,14 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, loading }) => {
           loading={loading}
           disabled={!text.trim() && !uploadedFile}
           style={{
-            height: '48px',
-            borderRadius: '12px',
-            paddingLeft: '20px',
-            paddingRight: '20px',
-            background: '#3b82f6'
+            height: compact ? 44 : 48,
+            borderRadius: 12,
+            paddingLeft: compact ? 14 : 20,
+            paddingRight: compact ? 14 : 20,
+            background: '#3b82f6',
           }}
         >
-          发送
+          {compact ? null : '发送'}
         </Button>
       </div>
     </div>

@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from src.skill_system.trigger_match import trigger_matches
+
 logger = logging.getLogger(__name__)
 
 
@@ -168,7 +170,7 @@ class SemanticRouter:
             # 检查 triggers
             triggers = getattr(skill, 'triggers', [])
             for trigger in triggers:
-                if trigger.lower() in query_lower:
+                if trigger_matches(trigger, query):
                     matches.append(SkillMatch(
                         skill_name=skill.name,
                         confidence=0.95,

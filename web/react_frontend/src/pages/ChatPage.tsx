@@ -1,44 +1,41 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Layout, Typography, Spin, message } from 'antd'
+import { Layout, Typography, Spin, message, Drawer, Button } from 'antd'
+import { MenuOutlined } from '@ant-design/icons'
 import { useMutation } from 'react-query'
 import ConversationSidebar from '../components/ConversationSidebar'
+import ConversationPanel from '../components/ConversationPanel'
 import ChatMessage from '../components/ChatMessage'
 import InputArea from '../components/InputArea'
 import { useChatStore } from '../store/useChatStore'
 import { chatApi, ChatResponse, conversationApi } from '../services/api'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const { Header, Content } = Layout
 const { Title, Text } = Typography
 
 const ChatPage: React.FC = () => {
+  const isMobile = useIsMobile()
+  const [convDrawerOpen, setConvDrawerOpen] = useState(false)
   const [threadId, setThreadId] = useState<string>('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const initialized = useRef(false)
-  
-  const { 
-    currentConversationId, 
-    conversations, 
+
+  const {
+    currentConversationId,
+    conversations,
     addMessage,
     uploadedFile,
-    updateConversationTitle,
     loadConversationDetail,
     loadConversations,
-    createNewConversation
   } = useChatStore()
 
-  const currentConversation = conversations.find(
-    c => c.id === currentConversationId
-  )
-
+  const currentConversation = conversations.find((c) => c.id === currentConversationId)
   const currentMessages = currentConversation?.messages || []
 
-  // 页面加载时初始化
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true
-      // 加载对话列表
       loadConversations().then(() => {
-        // 如果没有当前对话，创建一个新对话
         const state = useChatStore.getState()
         if (!state.currentConversationId) {
           useChatStore.getState().createNewConversation()
@@ -47,10 +44,9 @@ const ChatPage: React.FC = () => {
     }
   }, [loadConversations])
 
-  // 当切换对话时，加载对话详情（仅未加载且有历史消息时）
   useEffect(() => {
     if (!currentConversationId) return
-    const conv = conversations.find(c => c.id === currentConversationId)
+    const conv = conversations.find((c) => c.id === currentConversationId)
     if (!conv || conv.detailLoaded || conv.messages.length > 0) return
     loadConversationDetail(currentConversationId)
   }, [currentConversationId, conversations, loadConversationDetail])
@@ -63,36 +59,34 @@ const ChatPage: React.FC = () => {
 
   const sendMessageMutation = useMutation<ChatResponse, Error, string>({
     mutationFn: async (query) => {
-      // 确保有当前对话
       let convId = currentConversationId
       if (!convId) {
         const newConv = await conversationApi.createConversation({ title: '新对话' })
         convId = newConv.id
         setThreadId(convId)
-        // 更新store中的当前对话
-        useChatStore.setState(state => ({
-          conversations: [{ id: newConv.id, title: newConv.title, messages: [] }, ...state.conversations],
-          currentConversationId: newConv.id
+        useChatStore.setState((state) => ({
+          conversations: [
+            { id: newConv.id, title: newConv.title, messages: [], detailLoaded: true },
+            ...state.conversations,
+          ],
+          currentConversationId: newConv.id,
         }))
       }
 
-      const response = await chatApi.sendMessage({
+      return chatApi.sendMessage({
         query,
         thread_id: convId || undefined,
-        uploaded_file_path: uploadedFile?.path
+        uploaded_file_path: uploadedFile?.path,
       })
-      return response
     },
     onMutate: async (query) => {
-      // 添加用户消息到本地状态
       addMessage({
         id: `user-${Date.now()}`,
         role: 'user',
-        content: query
+        content: query,
       })
     },
     onSuccess: async (data) => {
-      // 添加助手消息到本地状态
       addMessage({
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -100,19 +94,18 @@ const ChatPage: React.FC = () => {
         agentType: data.agent_type,
         celeryTaskId: data.celery_task_id,
         downloadUrl: data.download_url,
-        references: data.references
+        references: data.references,
       })
 
       if (data.thread_id !== threadId) {
         setThreadId(data.thread_id)
       }
 
-      // 刷新对话列表以获取更新后的标题
       loadConversations()
     },
     onError: (error) => {
       message.error(`发送失败: ${error.message}`)
-    }
+    },
   })
 
   const handleSend = (text: string) => {
@@ -123,136 +116,148 @@ const ChatPage: React.FC = () => {
     sendMessageMutation.mutate(text)
   }
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
-
   useEffect(() => {
-    scrollToBottom()
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [currentMessages])
 
+  const drawerWidth = Math.min(300, typeof window !== 'undefined' ? window.innerWidth * 0.88 : 300)
+
   return (
-    <Layout style={{ height: '100vh' }}>
-      <ConversationSidebar />
-      
-      <Layout style={{ display: 'flex', flexDirection: 'column' }}>
-        <Header style={{ 
-          background: '#fff', 
-          borderBottom: '1px solid #e5e7eb',
-          padding: '0 24px',
-          height: '64px',
-          display: 'flex',
-          alignItems: 'center'
-        }}>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <Title level={4} style={{ margin: 0, color: '#111827' }}>
+    <Layout style={{ height: '100%', minWidth: 0 }}>
+      {!isMobile && <ConversationSidebar />}
+
+      <Drawer
+        title="对话与文件"
+        placement="left"
+        open={isMobile && convDrawerOpen}
+        onClose={() => setConvDrawerOpen(false)}
+        width={drawerWidth}
+        styles={{ body: { padding: 0 } }}
+        className="conversation-drawer"
+      >
+        <ConversationPanel showBrand={false} onClose={() => setConvDrawerOpen(false)} />
+      </Drawer>
+
+      <Layout style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+        <Header
+          className="chat-page-header"
+          style={{
+            background: '#fff',
+            borderBottom: '1px solid #e5e7eb',
+            padding: isMobile ? '0 12px' : '0 24px',
+            height: isMobile ? 52 : 64,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            flexShrink: 0,
+          }}
+        >
+          {isMobile && (
+            <Button
+              type="text"
+              icon={<MenuOutlined />}
+              aria-label="打开对话列表"
+              onClick={() => setConvDrawerOpen(true)}
+            />
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Title
+              level={isMobile ? 5 : 4}
+              style={{
+                margin: 0,
+                color: '#111827',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {currentConversation?.title || '网络运维智能助手'}
             </Title>
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              AI 驱动的网络运维平台 · Supervisor + RAG + 技能系统
-            </Text>
+            {!isMobile && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                AI 驱动的网络运维平台 · Supervisor + RAG + 技能系统
+              </Text>
+            )}
           </div>
         </Header>
 
-        <Content style={{ 
-          flex: 1, 
-          display: 'flex', 
-          flexDirection: 'column',
-          background: '#f8fafc',
-          overflow: 'hidden'
-        }}>
-          <div style={{ 
-            flex: 1, 
-            overflowY: 'auto', 
-            padding: '24px',
-            paddingBottom: '120px'
-          }}>
+        <Content
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            background: '#f8fafc',
+            overflow: 'hidden',
+            minHeight: 0,
+          }}
+        >
+          <div
+            className="chat-messages-scroll"
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: isMobile ? '12px' : '24px',
+              paddingBottom: isMobile ? 100 : 120,
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
             {currentMessages.length === 0 && !sendMessageMutation.isLoading && (
-              <div style={{ 
-                textAlign: 'center', 
-                padding: '60px 24px',
-                color: '#64748b'
-              }}>
-                <Title level={3} style={{ marginBottom: '16px', color: '#111827' }}>
+              <div style={{ textAlign: 'center', padding: isMobile ? '24px 8px' : '60px 24px', color: '#64748b' }}>
+                <Title level={isMobile ? 4 : 3} style={{ marginBottom: 12, color: '#111827' }}>
                   欢迎使用 NetOps Agent
                 </Title>
-                <Text style={{ fontSize: '15px', display: 'block', marginBottom: '24px' }}>
+                <Text style={{ fontSize: 14, display: 'block', marginBottom: 16 }}>
                   您可以问我关于网络配置、设备巡检、故障排查等问题
                 </Text>
-                <div style={{ 
-                  maxWidth: '600px', 
-                  margin: '0 auto',
-                  textAlign: 'left'
-                }}>
-                  <div style={{ 
-                    background: '#fff', 
-                    padding: '16px', 
-                    borderRadius: '12px',
-                    marginBottom: '12px',
-                    border: '1px solid #e5e7eb',
-                    cursor: 'pointer'
-                  }} onClick={() => handleSend('备份生产环境设备配置')}>
-                    <Text style={{ fontSize: '14px' }}>
-                      💾 设备备份："备份生产环境设备配置"
-                    </Text>
-                  </div>
-                  <div style={{ 
-                    background: '#fff', 
-                    padding: '16px', 
-                    borderRadius: '12px',
-                    marginBottom: '12px',
-                    border: '1px solid #e5e7eb',
-                    cursor: 'pointer'
-                  }} onClick={() => handleSend('对 prod 分组执行设备巡检')}>
-                    <Text style={{ fontSize: '14px' }}>
-                      🔍 设备巡检："对 prod 分组执行设备巡检"
-                    </Text>
-                  </div>
-                  <div style={{ 
-                    background: '#fff', 
-                    padding: '16px', 
-                    borderRadius: '12px',
-                    border: '1px solid #e5e7eb',
-                    cursor: 'pointer'
-                  }} onClick={() => handleSend('交换机端口 Down 了如何排查？')}>
-                    <Text style={{ fontSize: '14px' }}>
-                      ❓ 知识问答："交换机端口 Down 了如何排查？"
-                    </Text>
-                  </div>
+                <div style={{ maxWidth: 600, margin: '0 auto', textAlign: 'left' }}>
+                  {[
+                    { label: '💾 设备备份', text: '备份生产环境设备配置' },
+                    { label: '🔍 设备巡检', text: '对 prod 分组执行设备巡检' },
+                    { label: '❓ 知识问答', text: '交换机端口 Down 了如何排查？' },
+                  ].map((item) => (
+                    <div
+                      key={item.text}
+                      style={{
+                        background: '#fff',
+                        padding: isMobile ? 12 : 16,
+                        borderRadius: 12,
+                        marginBottom: 10,
+                        border: '1px solid #e5e7eb',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => handleSend(item.text)}
+                    >
+                      <Text style={{ fontSize: 14 }}>
+                        {item.label}："{item.text}"
+                      </Text>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
 
-            {currentMessages.map(msg => (
+            {currentMessages.map((msg) => (
               <ChatMessage
                 key={msg.id}
                 role={msg.role}
                 content={msg.content}
                 agentType={msg.agentType}
                 downloadUrl={msg.downloadUrl}
+                compact={isMobile}
               />
             ))}
 
             {sendMessageMutation.isLoading && (
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                padding: '20px 0' 
-              }}>
+              <div style={{ display: 'flex', alignItems: 'center', padding: '16px 0' }}>
                 <Spin size="small" />
-                <Text style={{ marginLeft: '12px', color: '#64748b' }}>
-                  Agent 正在思考中...
-                </Text>
+                <Text style={{ marginLeft: 12, color: '#64748b' }}>Agent 正在思考中...</Text>
               </div>
             )}
 
             <div ref={messagesEndRef} />
           </div>
 
-          <InputArea 
-            onSend={handleSend}
-            loading={sendMessageMutation.isLoading}
-          />
+          <InputArea onSend={handleSend} loading={sendMessageMutation.isLoading} compact={isMobile} />
         </Content>
       </Layout>
     </Layout>

@@ -17,6 +17,11 @@ from src.skills.skill_base import BaseSkill, SkillResult
 
 logger = logging.getLogger(__name__)
 
+# 同步执行的 Skill → handler 模块路径
+SYNC_SKILL_HANDLERS: dict[str, str] = {
+    "official-document-writing": "src.skills.official_document.service.official_document_writing_handler",
+}
+
 
 def _dummy_handler(*args, **kwargs):
     """占位 handler；实际逻辑在 execute 中。"""
@@ -90,6 +95,11 @@ class FileBasedSkill(BaseSkill):
 
         try:
             metadata = self.get_skill_metadata()
+            execution_mode = getattr(metadata, "execution_mode", "async") if metadata else "async"
+
+            if execution_mode == "sync" or self.name in SYNC_SKILL_HANDLERS:
+                return await self._execute_sync_handler(kwargs)
+
             task_name = skill_registry._resolve_celery_task(self.name, metadata)
 
             if task_name:
@@ -106,6 +116,39 @@ class FileBasedSkill(BaseSkill):
                 message=f"Skill 执行失败: {str(e)}",
                 error=str(e),
             )
+
+    async def _execute_sync_handler(self, params: dict) -> SkillResult:
+        """同步执行注册的 Python handler（不经 Celery）。"""
+        import asyncio
+        import importlib
+
+        handler_ref = SYNC_SKILL_HANDLERS.get(self.name)
+        if not handler_ref:
+            return SkillResult(
+                success=False,
+                message=f"Skill {self.name} 未配置同步 handler",
+                error="sync_handler_not_found",
+            )
+
+        module_name, func_name = handler_ref.rsplit(".", 1)
+        handler = getattr(importlib.import_module(module_name), func_name)
+        if asyncio.iscoroutinefunction(handler):
+            result = await handler(dict(params))
+        else:
+            result = handler(dict(params))
+
+        if isinstance(result, SkillResult):
+            return result
+        if isinstance(result, dict):
+            return SkillResult(
+                success=bool(result.get("success", True)),
+                message=result.get("message", ""),
+                data=result.get("data") or {},
+                download_url=result.get("download_url"),
+                error=result.get("error"),
+                execution_time_ms=int(result.get("execution_time_ms") or 0),
+            )
+        return SkillResult(success=True, message=str(result), data={"raw_result": result})
 
     async def _execute_with_celery(self, task_name: str, params: dict) -> SkillResult:
         from src.core.celery_tasks import tasks
