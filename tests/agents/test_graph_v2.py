@@ -70,7 +70,31 @@ def test_heuristic_plan_for_firewall_trigger():
     assert _has_trigger_match(matches, ["firewall-policy-generator"])
 
 
-def test_merge_params_with_deps_injects_previous_output():
+def test_heuristic_plan_multi_skill_sequential_firewall_then_patrol():
+    query = "帮我生成防火墙策略，工单号test001，生成之后帮我进行巡检网络设备"
+    matches = [
+        SkillMatch(
+            skill_name="device-patrol",
+            confidence=0.95,
+            match_type="trigger",
+            reason="匹配触发词: 巡检",
+        ),
+        SkillMatch(
+            skill_name="firewall-policy-generator",
+            confidence=0.95,
+            match_type="trigger",
+            reason="匹配触发词: 生成防火墙策略",
+        ),
+    ]
+    loaded = ["device-patrol", "firewall-policy-generator"]
+    plan = _build_heuristic_execution_plan(query, loaded, matches, None)
+    assert plan is not None
+    assert len(plan.skills) == 2
+    assert plan.skills[0].skill_name == "firewall-policy-generator"
+    assert plan.skills[0].parameters.get("ticket_id") == "test001"
+    assert plan.skills[1].skill_name == "device-patrol"
+    assert plan.skills[1].depends_on == ["firewall-policy-generator"]
+    assert plan.skills[1].parameters.get("filter_params") == {}
     task = SkillTaskSpec(
         skill_name="config-backup",
         parameters={"device": "sw1"},
@@ -95,7 +119,7 @@ def test_next_runnable_task_respects_dependencies():
         SkillTaskSpec(skill_name="b", parameters={}, depends_on=["a"]),
     ]
     assert _next_runnable_task(tasks, set()).skill_name == "a"
-    assert _next_runnable_task(tasks, {"a"}).skill_name == "b"
+    assert _next_runnable_task(tasks, {"a"}, {"a": {"success": True}}).skill_name == "b"
     assert _next_runnable_task(tasks, {"a", "b"}) is None
 
 
@@ -241,7 +265,11 @@ def test_parallel_runnable_respects_dependencies():
     ]
     assert len(_parallel_runnable_tasks(pending, set(), {})) == 1
     assert _parallel_runnable_tasks(pending, set(), {})[0].skill_name == "a"
-    runnable = _parallel_runnable_tasks(pending, {"a"}, {"a": {"success": True}})
+    runnable = _parallel_runnable_tasks(
+        [SkillTaskSpec(skill_name="b", parameters={}, depends_on=["a"])],
+        {"a"},
+        {"a": {"success": True}},
+    )
     assert len(runnable) == 1
     assert runnable[0].skill_name == "b"
 

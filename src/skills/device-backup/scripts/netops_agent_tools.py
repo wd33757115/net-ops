@@ -405,10 +405,20 @@ class PatrolTool:
         
         devices = self.db_manager.get_devices_by_filter(filter_params)
         if not devices:
+            filter_dump = filter_params.model_dump(exclude_none=True)
+            if not filter_dump:
+                return TaskResult(
+                    success=False,
+                    action=ActionType.PATROL,
+                    message=(
+                        "未找到可巡检设备：设备库为空。"
+                        "请先运行 python src/skills/device-backup/scripts/init_test_db.py 初始化测试数据"
+                    ),
+                )
             return TaskResult(
                 success=False,
                 action=ActionType.PATROL,
-                message=f"未找到符合条件的设备: {filter_params.model_dump(exclude_none=True)}"
+                message=f"未找到符合条件的设备: {filter_dump}",
             )
         
         logger.info(f"[巡检] 开始巡检 {len(devices)} 个设备, 保存基线: {save_baseline}")

@@ -190,6 +190,83 @@ def _filter_skill_matches(query: str, matches: list[SkillMatch]) -> list[SkillMa
     return filtered
 
 
+_SEQUENTIAL_INTENT = re.compile(
+    r"之后|然后|接着|完成后|先.+?后|再.{0,12}(?:巡检|备份|生成|检查)"
+)
+
+
+def _trigger_position_in_query(query: str, match: SkillMatch) -> int:
+    """触发词在用户话术中首次出现的位置（用于多 Skill 排序）。"""
+    reason = match.reason or ""
+    trigger = ""
+    for sep in ("匹配触发词:", "匹配触发词："):
+        if sep in reason:
+            trigger = reason.split(sep, 1)[1].strip()
+            break
+    if trigger:
+        pos = query.lower().find(trigger.lower())
+        if pos >= 0:
+            return pos
+    return 10**9
+
+
+def _ordered_trigger_skills(
+    query: str,
+    loaded_skills: list[str],
+    skill_matches: list[SkillMatch] | None,
+) -> list[str]:
+    """按话术中触发词出现顺序排列所有触发词命中的 Skill。"""
+    matches_by_name = {m.skill_name: m for m in (skill_matches or [])}
+    triggered = [
+        name
+        for name in loaded_skills
+        if (match := matches_by_name.get(name)) and match.match_type == "trigger"
+    ]
+    triggered.sort(key=lambda name: _trigger_position_in_query(query, matches_by_name[name]))
+    return triggered
+
+
+def _extract_device_filter_params(query: str) -> dict[str, Any]:
+    """从用户话术中提取设备备份/巡检过滤条件（规则调度免 LLM）。"""
+    params: dict[str, Any] = {}
+    ip_match = re.search(r"\d{1,3}(?:\.\d{1,3}){3}", query)
+    if ip_match:
+        params["ip"] = ip_match.group(0)
+    for group in ("生产环境", "测试环境", "DMZ区域"):
+        if group in query:
+            params["group"] = group
+            break
+    group_match = re.search(r"(?:分组|group)[为是:\s]+([^\s，,。.]+)", query, re.IGNORECASE)
+    if group_match:
+        params["group"] = group_match.group(1)
+    return params
+
+
+def _build_heuristic_skill_params(
+    skill_name: str,
+    query: str,
+    uploaded_file_path: str | None,
+    ticket_id: str | None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    if ticket_id:
+        params["ticket_id"] = ticket_id
+    if skill_name == "firewall-policy-generator":
+        if uploaded_file_path:
+            params["policy_file_url"] = uploaded_file_path
+        params.setdefault("ticket_title", "防火墙策略生成")
+    elif skill_name == "official-document-writing":
+        params.setdefault("user_query", query)
+        params.setdefault("action", "write")
+        for doc_type in ("请示", "通知", "函", "报告", "总结", "纪要", "决定"):
+            if doc_type in query:
+                params.setdefault("document_type", doc_type)
+                break
+    elif skill_name in ("device-backup", "device-patrol"):
+        params["filter_params"] = _extract_device_filter_params(query)
+    return params
+
+
 def _build_heuristic_execution_plan(
     query: str,
     loaded_skills: list[str],
@@ -198,40 +275,34 @@ def _build_heuristic_execution_plan(
 ) -> ExecutionPlan | None:
     """
     不调用 LLM 的规则化 ExecutionPlan（触发词已匹配时使用）。
-    避免 API 余额不足时误走 RAG。
+    支持多 Skill：按话术中触发词顺序编排；含「之后/然后」等词时建立 depends_on 链。
     """
-    if not loaded_skills:
+    ordered = _ordered_trigger_skills(query, loaded_skills, skill_matches)
+    if not ordered:
         return None
 
-    matches_by_name = {m.skill_name: m for m in (skill_matches or [])}
-    primary = None
-    for name in loaded_skills:
-        match = matches_by_name.get(name)
-        if match and match.match_type == "trigger":
-            primary = name
-            break
-    if not primary:
-        return None
-
-    params: dict[str, Any] = {}
     ticket_id = _extract_ticket_id(query)
-    if ticket_id:
-        params["ticket_id"] = ticket_id
-    if uploaded_file_path:
-        params["policy_file_url"] = uploaded_file_path
-    if primary == "official-document-writing":
-        params.setdefault("user_query", query)
-        params.setdefault("action", "write")
-        for doc_type in ("请示", "通知", "函", "报告", "总结", "纪要", "决定"):
-            if doc_type in query:
-                params.setdefault("document_type", doc_type)
-                break
+    matches_by_name = {m.skill_name: m for m in (skill_matches or [])}
+    sequential = len(ordered) > 1 and bool(_SEQUENTIAL_INTENT.search(query))
 
-    match = matches_by_name.get(primary)
-    reason = match.reason if match else "已加载 Skill 指令"
+    tasks: list[SkillTaskSpec] = []
+    prev: str | None = None
+    for name in ordered:
+        params = _build_heuristic_skill_params(name, query, uploaded_file_path, ticket_id)
+        depends_on = [prev] if sequential and prev else []
+        tasks.append(SkillTaskSpec(skill_name=name, parameters=params, depends_on=depends_on))
+        prev = name
+
+    reasons = [matches_by_name[n].reason for n in ordered if matches_by_name.get(n)]
+    if len(ordered) > 1:
+        mode_hint = "顺序" if sequential else "并行"
+        reasoning = f"规则调度（免 LLM，{mode_hint}）: " + " → ".join(reasons)
+    else:
+        reasoning = f"规则调度（免 LLM）: {reasons[0] if reasons else '已加载 Skill 指令'}"
+
     return ExecutionPlan(
-        reasoning=f"规则调度（免 LLM）: {reason}",
-        skills=[SkillTaskSpec(skill_name=primary, parameters=params)],
+        reasoning=reasoning,
+        skills=tasks,
         execution_mode="parallel",
         fallback_to_rag=False,
     )
@@ -479,10 +550,11 @@ def supervisor_node_v2(state: SupervisorStateV2) -> SupervisorStateV2:
     )
 
     if use_rule_plan:
-        print(
-            f"   ExecutionPlan: 规则调度 → {heuristic_plan.skills[0].skill_name} "
-            f"params={heuristic_plan.skills[0].parameters}"
+        skill_names = " → ".join(
+            f"{t.skill_name}{'←' + ','.join(t.depends_on) if t.depends_on else ''}"
+            for t in heuristic_plan.skills
         )
+        print(f"   ExecutionPlan: 规则调度 → {skill_names}")
         increment_counter("supervisor_v2_plan_total", tags={"result": "rule_plan"})
         observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
         return {
