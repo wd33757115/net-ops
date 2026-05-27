@@ -22,8 +22,10 @@ from typing import Optional, List, Dict, Any, Literal
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-BASE_DIR = Path(__file__).parent.parent
-sys.path.insert(0, str(BASE_DIR))
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = SKILL_ROOT / "data"
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from langchain_core.messages import AIMessage
 from src.common.config import get_settings
@@ -99,7 +101,7 @@ class DBManager:
     """设备数据库管理类"""
     
     def __init__(self, db_file: Path = None):
-        self.db_file = db_file or BASE_DIR / "tools" / "backup-inspect" / "db" / "devices.db"
+        self.db_file = db_file or DATA_DIR / "db" / "devices.db"
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
     
@@ -201,7 +203,7 @@ class ConfigBackupTool:
     
     def __init__(self, db_manager: DBManager):
         self.db_manager = db_manager
-        self.output_base = BASE_DIR / "tools" / "backup-inspect" / "outputs"
+        self.output_base = DATA_DIR / "outputs"
         self.output_base.mkdir(parents=True, exist_ok=True)
     
     def _mask_password(self, password: str) -> str:
@@ -319,7 +321,7 @@ class PatrolTool:
     
     def __init__(self, db_manager: DBManager):
         self.db_manager = db_manager
-        self.output_base = BASE_DIR / "tools" / "backup-inspect" / "outputs"
+        self.output_base = DATA_DIR / "outputs"
         self.output_base.mkdir(parents=True, exist_ok=True)
     
     def _mask_password(self, password: str) -> str:

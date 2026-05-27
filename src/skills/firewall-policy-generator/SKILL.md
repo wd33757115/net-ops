@@ -15,6 +15,8 @@ triggers:
 - 防火墙配置
 - 创建策略
 - policy file
+celery_task: execute_firewall_policy_task
+execution_mode: async
 inputs:
 - name: ticket_id
   type: string
@@ -53,7 +55,10 @@ references:
   description: 防火墙策略编写指南
 - type: file
   path: scripts/generate_config.py
-  description: 策略生成脚本（可选）
+  description: Skill 标准入口（与 scripts/firewall-policy.py 等价）
+- type: file
+  path: scripts/firewall-policy.py
+  description: 策略生成主程序（含 core、policy_engine、vendor_config）
 enabled: true
 fallback_to_rag: true
 ---
@@ -126,13 +131,21 @@ fallback_to_rag: true
 
 ## 实际执行说明
 
-此 Skill 需要调用后端 Celery 任务 `execute_firewall_policy_task` 执行实际的策略生成。
+此 Skill 通过 Celery 任务 `execute_firewall_policy_task` 执行，调用链如下：
+
+1. Supervisor 从用户话术中提取 `ticket_id`（支持「工单号test001」「工单号：test001」）
+2. Celery 任务调用 `scripts/firewall-policy.py --ticket-id <工单号>`
+3. Skill 目录 `scripts/generate_config.py` 为文档/引用入口，与上述脚本等价
+
+**脚本位置说明**：
+- **Skill 入口**：`src/skills/firewall-policy-generator/scripts/generate_config.py`
+- **实现代码**：`src/skills/firewall-policy-generator/scripts/`（topology.json、core、policy_engine 等）
 
 执行步骤：
-1. 接收用户参数
-2. 调用 `execute_firewall_policy_task.delay(**params)` 提交任务
+1. 接收用户参数（含 ticket_id、policy_file_url）
+2. 调用 `execute_firewall_policy_task.delay(**params)`
 3. 等待任务完成（最长 300 秒）
-4. 返回包含配置文件下载链接的结果
+4. 返回配置文件下载链接
 
 ## 安全规范
 

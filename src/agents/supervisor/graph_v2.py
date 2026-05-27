@@ -27,6 +27,7 @@ from src.agents.supervisor.models_v2 import (
 )
 from src.common.config import get_settings
 from src.common.metrics import increment_counter, observe_histogram
+from src.common.ticket_utils import extract_ticket_id as _extract_ticket_id
 from src.infrastructure.db.postgres import get_postgres_saver
 from src.skill_system import get_skill_system
 from src.skill_system.router import SkillMatch
@@ -100,19 +101,6 @@ def _route_skills(query: str, top_k: int = PRE_PROCESS_TOP_K) -> list[SkillMatch
     if skill_system.router:
         return skill_system.router.route(query, top_k=top_k)
     return skill_system.route(query, top_k=top_k)
-
-
-def _extract_ticket_id(query: str) -> str | None:
-    """从用户话术中提取工单号。"""
-    patterns = [
-        r"工单号[：:\s]+([A-Za-z0-9_-]+)",
-        r"ticket[_\s-]?id[：:\s]+([A-Za-z0-9_-]+)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, query, re.IGNORECASE)
-        if match:
-            return match.group(1).strip("，。,. ")
-    return None
 
 
 def _has_trigger_match(skill_matches: list[SkillMatch], loaded_skills: list[str]) -> bool:
@@ -386,6 +374,9 @@ def _build_send_payload(state: SupervisorStateV2, task: SkillTaskSpec) -> dict[s
         state.get("uploaded_file_path"),
         state.get("ticket_id") or "",
     )
+    messages = state.get("messages") or []
+    if messages:
+        params.setdefault("user_query", messages[-1].content)
     return {
         "current_skill_task": task,
         "skill_decision": SkillDecision(
@@ -441,8 +432,14 @@ def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
         f"耗时 {duration_ms:.0f}ms"
     )
 
+    ticket_id = _extract_ticket_id(query) or state.get("ticket_id")
+    ticket_update = {}
+    if ticket_id:
+        ticket_update["ticket_id"] = ticket_id
+
     return {
         **state,
+        **ticket_update,
         "skill_matches": matches,
         "skill_instructions": skill_instructions,
         "loaded_skills": loaded_skills,

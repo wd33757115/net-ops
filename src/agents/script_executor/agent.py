@@ -187,7 +187,9 @@ def handle_device_management_request(state: dict[str, Any], query: str) -> dict[
         # 正确添加项目根目录到 Python 路径
         BASE_DIR = Path(__file__).parent.parent.parent.parent
         sys.path.insert(0, str(BASE_DIR))
-        from tools.netops_agent_tools import NetOpsToolsOrchestrator
+        from src.core.device_ops.loader import import_netops_agent_tools
+
+        NetOpsToolsOrchestrator = import_netops_agent_tools().NetOpsToolsOrchestrator
 
         # 使用同步方式调用
         orchestrator = NetOpsToolsOrchestrator()

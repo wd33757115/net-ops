@@ -86,9 +86,9 @@ curl -X POST http://localhost:8000/api/v1/chat \
 #### 方式二：本地脚本执行
 
 ```bash
-python tools/firewall-policy/firewall-policy.py \
-    -t tools/firewall-policy/topology.json \
-    -p tools/firewall-policy/policies.xlsx \
+python src/skills/firewall-policy-generator/scripts/firewall-policy.py \
+    -t src/skills/firewall-policy-generator/scripts/topology.json \
+    -p src/skills/firewall-policy-generator/scripts/policies.xlsx \
     -o output \
     -u username \
     -i TICKET_ID
@@ -112,12 +112,18 @@ netops-agent/
 │   ├── core/                # 核心模块
 │   │   └── celery_tasks/   # Celery异步任务
 │   ├── gateway/             # API网关
-│   └── infrastructure/      # 基础设施
-├── tools/                   # 运维工具
-│   └── firewall-policy/     # 防火墙策略工具
-│       ├── firewall-policy.py  # 入口脚本
-│       ├── policies.xlsx        # 策略文件示例
-│       └── topology.json        # 拓扑文件
+│   ├── infrastructure/      # 基础设施
+│   └── skills/              # Skill 定义与脚本
+│       ├── firewall-policy-generator/
+│       │   ├── SKILL.md
+│       │   └── scripts/     # firewall-policy.py、topology.json 等
+│       ├── device-backup/
+│       │   ├── SKILL.md
+│       │   ├── scripts/     # netops_agent_tools.py、init_test_db.py
+│       │   └── data/          # db、outputs（运行时）
+│       └── device-patrol/
+│           ├── SKILL.md
+│           └── scripts/
 └── knowledge_base/          # 知识库文件
     └── sops/                # SOP文档
 ```
@@ -195,11 +201,11 @@ pip install netmiko
 **原因**: 数据库路径配置错误
 
 **解决**:
-1. 确认数据库位置：`tools/backup-inspect/db/devices.db`
+1. 确认数据库位置：`src/skills/device-backup/data/db/devices.db`
 2. 检查路径是否有读写权限
 3. 重新初始化数据库：
    ```bash
-   python tools/init_test_db.py
+   python src/skills/device-backup/scripts/init_test_db.py
    ```
 
 ---

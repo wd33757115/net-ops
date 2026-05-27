@@ -157,7 +157,8 @@ deployment/qdrant_storage/
 # ============================================================
 # Project-specific directories
 # ============================================================
-tools/backup-inspect/db/
+src/skills/device-backup/data/db/
+src/skills/device-backup/data/outputs/
 
 # ============================================================
 # Node.js / Frontend

@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-db_path = Path(__file__).parent / "backup-inspect" / "db" / "devices.db"
+db_path = Path(__file__).resolve().parent.parent / "data" / "db" / "devices.db"
 db_path.parent.mkdir(parents=True, exist_ok=True)
 
 conn = sqlite3.connect(db_path)

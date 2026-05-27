@@ -25,6 +25,7 @@ from src.agents.supervisor.models_v2 import ExecutionPlan, SkillTaskSpec
 def test_extract_ticket_id_from_query():
     assert _extract_ticket_id("生成防火墙策略，工单号：rg001") == "rg001"
     assert _extract_ticket_id("ticket_id: ABC-99") == "ABC-99"
+    assert _extract_ticket_id("帮我生成防火墙策略，工单号test001") == "test001"
 
 
 def test_knowledge_question_not_rule_scheduled_to_skill():

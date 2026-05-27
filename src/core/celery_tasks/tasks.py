@@ -52,7 +52,9 @@ def execute_firewall_policy_task(
             # 处理策略文件：支持 URL、file:// 路径、本地路径
             # 如果未提供 policy_file_url，使用默认测试文件
             if not policy_file_url:
-                default_policy = os.path.join(BASE_DIR, "tools", "firewall-policy", "test_policy.xlsx")
+                from src.core.firewall_policy.paths import DEFAULT_POLICY_FILE
+
+                default_policy = str(DEFAULT_POLICY_FILE)
                 if os.path.exists(default_policy):
                     import shutil
                     shutil.copy(default_policy, policy_path)
@@ -85,20 +87,44 @@ def execute_firewall_policy_task(
 
             topology_path = topology_file_url
             if not topology_path:
-                topology_path = os.path.join(BASE_DIR, "tools", "firewall-policy", "topology.json")
+                from src.core.firewall_policy.paths import DEFAULT_TOPOLOGY_FILE
+
+                topology_path = str(DEFAULT_TOPOLOGY_FILE)
 
             import subprocess
+
+            from src.core.firewall_policy.paths import (
+                DEFAULT_TOPOLOGY_FILE,
+                get_firewall_policy_cwd,
+                get_firewall_policy_script,
+            )
+
+            script_path = get_firewall_policy_script()
+            if not topology_path or not os.path.exists(topology_path):
+                topology_path = str(DEFAULT_TOPOLOGY_FILE)
+
+            effective_ticket_id = (ticket_id or "").strip()
+            if not effective_ticket_id:
+                effective_ticket_id = f"POLICY_{str(task_id)[:8]}"
+
             cmd = [
                 sys.executable,
-                os.path.join(BASE_DIR, "tools", "firewall-policy", "firewall-policy.py"),
+                str(script_path),
                 "-t", topology_path,
                 "-p", policy_path,
                 "-o", output_dir,
                 "-u", requester or "system",
-                "-i", ticket_id
+                "--ticket-id", effective_ticket_id,
             ]
+            print(f"[DEBUG] firewall policy cmd: {' '.join(cmd)}")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=str(get_firewall_policy_cwd()),
+            )
 
             if result.returncode != 0:
                 raise Exception(f"策略生成失败: {result.stderr}")
@@ -228,7 +254,12 @@ def execute_config_backup_task(
     print(f"[DEBUG] config_backup task - ticket_id: {ticket_id}")
 
     try:
-        from tools.netops_agent_tools import ConfigBackupTool, DBManager, DeviceFilter
+        from src.core.device_ops.loader import import_netops_agent_tools
+
+        netops = import_netops_agent_tools()
+        ConfigBackupTool = netops.ConfigBackupTool
+        DBManager = netops.DBManager
+        DeviceFilter = netops.DeviceFilter
 
         db_manager = DBManager()
         backup_tool = ConfigBackupTool(db_manager)
@@ -303,7 +334,12 @@ def execute_device_patrol_task(
     print(f"[DEBUG] device_patrol task - save_baseline: {save_baseline}")
 
     try:
-        from tools.netops_agent_tools import DBManager, DeviceFilter, PatrolTool
+        from src.core.device_ops.loader import import_netops_agent_tools
+
+        netops = import_netops_agent_tools()
+        DBManager = netops.DBManager
+        DeviceFilter = netops.DeviceFilter
+        PatrolTool = netops.PatrolTool
 
         db_manager = DBManager()
         patrol_tool = PatrolTool(db_manager)

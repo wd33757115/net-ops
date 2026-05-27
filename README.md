@@ -53,8 +53,8 @@ flowchart TB
     subgraph Async["异步执行"]
         Worker[Celery Worker<br/>Windows: -P solo]
         Tasks["tasks.py<br/>备份 / 巡检 / 防火墙策略等"]
-        Tools[tools / Netmiko]
-        Worker --> Tasks --> Tools
+        SkillScripts[Skill scripts / Netmiko]
+        Worker --> Tasks --> SkillScripts
     end
 
     subgraph Middleware["Docker 中间件（scripts/test/start.ps1）"]

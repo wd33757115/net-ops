@@ -129,6 +129,8 @@ fallback_to_rag: true
 
 此 Skill 需要调用后端 Celery 任务 `execute_device_patrol_task` 执行实际的巡检操作。
 
+**脚本位置**：运行时逻辑在 `src/skills/device-backup/scripts/netops_agent_tools.py`（PatrolTool）；CLI 参考脚本 `src/skills/device-patrol/scripts/net_device_inspect.py`
+
 执行步骤：
 1. 接收用户参数
 2. 调用 `execute_device_patrol_task.delay(**params)` 提交任务

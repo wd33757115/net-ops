@@ -166,12 +166,21 @@ class FileBasedSkill(BaseSkill):
         params = skill_registry._prepare_task_params(task_name, params)
 
         if task_name == "execute_firewall_policy_task":
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-            test_file = os.path.join(base_dir, "tools", "firewall-policy", "test_policy.xlsx")
-            if not params.get("policy_file_url") and os.path.exists(test_file):
-                params["policy_file_url"] = test_file
+            from src.core.firewall_policy.paths import DEFAULT_POLICY_FILE
+
+            if not params.get("policy_file_url") and DEFAULT_POLICY_FILE.exists():
+                params["policy_file_url"] = str(DEFAULT_POLICY_FILE)
             if not params.get("ticket_id"):
-                params["ticket_id"] = f"POLICY_{params.get('thread_id', '000')}"
+                for key in ("query", "user_query", "message"):
+                    if params.get(key):
+                        from src.common.ticket_utils import extract_ticket_id
+
+                        extracted = extract_ticket_id(str(params[key]))
+                        if extracted:
+                            params["ticket_id"] = extracted
+                            break
+                if not params.get("ticket_id"):
+                    params["ticket_id"] = f"POLICY_{params.get('thread_id', '000')}"
             if not params.get("ticket_title"):
                 params["ticket_title"] = "防火墙策略生成"
 
