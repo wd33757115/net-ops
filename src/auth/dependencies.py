@@ -11,12 +11,16 @@ from src.gateway.bff_security import is_enforce_bff_origin_enabled
 
 
 async def get_optional_user(request: Request) -> CurrentUser | None:
-    return resolve_current_user(request.headers)
+    user = resolve_current_user(request.headers)
+    if user:
+        request.state.current_user = user
+    return user
 
 
 async def get_current_user(request: Request) -> CurrentUser:
     user = resolve_current_user(request.headers)
     if user:
+        request.state.current_user = user
         return user
     if is_enforce_bff_origin_enabled():
         raise HTTPException(

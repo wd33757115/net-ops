@@ -25,8 +25,11 @@ function Assert-Ok($name, $cond, $detail = "") {
 }
 
 try {
-    $api = Invoke-RestMethod "http://localhost:$FastAPIPort/health" -TimeoutSec 15
+    $api = Invoke-RestMethod "http://localhost:$FastAPIPort/health" -TimeoutSec 30
     Assert-Ok "FastAPI /health" ($api.status -eq "healthy" -or $api.status -eq "degraded")
+    if ($api.status -eq "degraded" -and -not $api.services.postgres) {
+        Write-ColorOutput "  [WARN] FastAPI degraded: PostgreSQL not connected (is Docker middleware running?)" "Yellow"
+    }
 } catch {
     Assert-Ok "FastAPI /health" $false $_.Exception.Message
 }
@@ -39,10 +42,14 @@ try {
 }
 
 try {
-    $convs = Invoke-RestMethod "http://localhost:$DjangoPort/api/conversations/" -TimeoutSec 15
+    $convs = Invoke-RestMethod "http://localhost:$DjangoPort/api/conversations/" -TimeoutSec 30
     Assert-Ok "Django BFF /api/conversations/" ($convs.success -eq $true)
 } catch {
-    Assert-Ok "Django BFF /api/conversations/" $false $_.Exception.Message
+    $detail = $_.Exception.Message
+    if ($detail -match "500") {
+        $detail += " (often: PostgreSQL down — start Docker Desktop and run start.ps1)"
+    }
+    Assert-Ok "Django BFF /api/conversations/" $false $detail
 }
 
 try {

@@ -84,8 +84,10 @@ flowchart TB
 ### 用户与展示层
 | 组件 | 端口 | 职责 |
 |------|------|------|
-| React | 3000 | 聊天、Skill 管理、系统状态 |
-| Django BFF | 8001 | 统一 `/api` 入口、代理 FastAPI、WebSocket 转发 |
+| React | 3000 | 聊天、Skill 管理、系统状态、登录与账户管理 |
+| Django BFF | 8001 | 统一 `/api` 入口、JWT 认证、代理 FastAPI、WebSocket 转发 |
+
+多用户认证、RBAC 与 BFF 可信头规范见 **[docs/auth-rbac-plan.md](docs/auth-rbac-plan.md)**；Langfuse + SSE 流式 Trace 见 **[docs/langfuse-sse-plan.md](docs/langfuse-sse-plan.md)**。演示账号：`admin/admin123` · `operator/operator123` · `viewer/viewer123`。
 
 ### API 与编排层
 | 组件 | 端口 | 职责 |

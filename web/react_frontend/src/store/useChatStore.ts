@@ -35,6 +35,7 @@ interface ChatStore {
   createNewConversation: () => void
   setUploadedFile: (file: { name: string; path: string } | null) => void
   loadConversations: () => Promise<void>
+  refreshConversationMeta: () => Promise<void>
   loadConversationDetail: (id: string) => Promise<void>
   updateConversationTitle: (id: string, title: string) => void
   deleteConversation: (id: string) => void
@@ -105,26 +106,54 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       const { conversationApi } = await import('../services/api')
       const data = await conversationApi.getConversations()
-      const conversations: Conversation[] = data.map(c => ({
-        id: c.id,
-        title: c.title,
-        messages: [],
-        status: c.status,
-        summary: c.summary,
-        createdAt: c.created_at,
-        updatedAt: c.updated_at,
-        messageCount: c.message_count,
-        detailLoaded: (c.message_count ?? 0) === 0,
-      }))
-      set({ conversations })
-      if (conversations.length > 0 && !get().currentConversationId) {
-        set({ currentConversationId: conversations[0].id })
+      set((state) => {
+        const conversations: Conversation[] = data.map((c) => {
+          const existing = state.conversations.find((conv) => conv.id === c.id)
+          const hasLocalMessages = (existing?.messages.length ?? 0) > 0
+          return {
+            id: c.id,
+            title: c.title,
+            messages: hasLocalMessages ? existing!.messages : [],
+            status: c.status,
+            summary: c.summary,
+            createdAt: c.created_at,
+            updatedAt: c.updated_at,
+            messageCount: c.message_count,
+            detailLoaded: hasLocalMessages || (c.message_count ?? 0) === 0 || existing?.detailLoaded,
+          }
+        })
+        return { conversations }
+      })
+      if (data.length > 0 && !get().currentConversationId) {
+        set({ currentConversationId: data[0].id })
       }
     } catch (error) {
       console.error('Failed to load conversations:', error)
       set({ error: '加载对话列表失败' })
     } finally {
       set({ loading: false })
+    }
+  },
+  refreshConversationMeta: async () => {
+    try {
+      const { conversationApi } = await import('../services/api')
+      const data = await conversationApi.getConversations()
+      set((state) => ({
+        conversations: state.conversations.map((conv) => {
+          const remote = data.find((c) => c.id === conv.id)
+          if (!remote) return conv
+          return {
+            ...conv,
+            title: remote.title,
+            status: remote.status,
+            summary: remote.summary,
+            updatedAt: remote.updated_at,
+            messageCount: remote.message_count,
+          }
+        }),
+      }))
+    } catch (error) {
+      console.error('Failed to refresh conversation meta:', error)
     }
   },
   loadConversationDetail: async (id: string) => {

@@ -1,26 +1,17 @@
 import React, { useMemo, useState } from 'react'
 import {
-  Alert,
   Button,
-  Card,
-  Col,
   Form,
   Input,
   Modal,
   Popconfirm,
-  Row,
-  Space,
   Spin,
-  Statistic,
   Switch,
   Table,
-  Tag,
-  Typography,
   Upload,
   message,
 } from 'antd'
 import {
-  BookOutlined,
   ReloadOutlined,
   DatabaseOutlined,
   UploadOutlined,
@@ -30,6 +21,8 @@ import {
 } from '@ant-design/icons'
 import type { UploadFile } from 'antd/es/upload/interface'
 import { useMutation, useQuery, useQueryClient } from 'react-query'
+import GrokShellLayout from '../components/layout/GrokShellLayout'
+import { GrokChip, GrokInfoBar, GrokRowAction, GrokToolBtn } from '../components/ui/GrokUi'
 import {
   knowledgeApi,
   type KnowledgeDocument,
@@ -37,15 +30,6 @@ import {
   type KnowledgeStats,
 } from '../services/api'
 import { useIsMobile } from '../hooks/useIsMobile'
-
-const { Title, Text, Paragraph } = Typography
-
-const docTypeColor: Record<string, string> = {
-  sop: 'blue',
-  configuration: 'purple',
-  troubleshooting: 'orange',
-  general: 'default',
-}
 
 const ACCEPT = '.md,.txt,.pdf,.docx'
 
@@ -217,7 +201,7 @@ const KnowledgePage: React.FC = () => {
       dataIndex: 'doc_type',
       key: 'doc_type',
       width: 120,
-      render: (v: string) => <Tag color={docTypeColor[v] || 'default'}>{v}</Tag>,
+      render: (v: string) => <GrokChip>{v}</GrokChip>,
     },
     {
       title: '大小',
@@ -232,9 +216,9 @@ const KnowledgePage: React.FC = () => {
       width: 100,
       render: (_: unknown, row: KnowledgeDocument) =>
         row.indexed ? (
-          <Tag color="success">{row.chunk_count} 片段</Tag>
+          <GrokChip tone="ok">{row.chunk_count} 片段</GrokChip>
         ) : (
-          <Tag color="warning">未索引</Tag>
+          <GrokChip tone="warn">未索引</GrokChip>
         ),
     },
     {
@@ -251,123 +235,104 @@ const KnowledgePage: React.FC = () => {
       width: 160,
       fixed: isMobile ? ('right' as const) : undefined,
       render: (_: unknown, row: KnowledgeDocument) => (
-        <Space size="small">
-          <Button
-            type="link"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handlePreview(row.relative_path)}
-          >
+        <span className="grok-row-actions">
+          <GrokRowAction icon={<EyeOutlined />} onClick={() => handlePreview(row.relative_path)}>
             预览
-          </Button>
+          </GrokRowAction>
           <Popconfirm
             title="确认删除该文档？"
             description="删除后无法恢复"
             onConfirm={() => deleteMutation.mutate(row.relative_path)}
           >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />} loading={deleteMutation.isLoading}>
+            <GrokRowAction danger icon={<DeleteOutlined />} disabled={deleteMutation.isLoading}>
               删除
-            </Button>
+            </GrokRowAction>
           </Popconfirm>
-        </Space>
+        </span>
       ),
     },
   ]
 
-  return (
-    <div style={{ padding: isMobile ? 16 : 24, height: '100%', overflow: 'auto' }}>
-      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 20 }} wrap>
-        <div>
-          <Title level={3} style={{ margin: 0 }}>
-            <BookOutlined style={{ marginRight: 8 }} />
-            知识库管理
-          </Title>
-          <Text type="secondary">上传、预览、删除文档并管理 RAG 向量索引</Text>
-        </div>
-        <Space wrap>
-          <Input.Search
-            placeholder="搜索文档..."
-            allowClear
-            onSearch={setSearch}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: isMobile ? 160 : 260 }}
-          />
-          <span style={{ fontSize: 13 }}>
-            变更后自动重建索引
-            <Switch
-              size="small"
-              checked={autoReindexOnChange}
-              onChange={setAutoReindexOnChange}
-              style={{ marginLeft: 8 }}
-            />
-          </span>
-          <Button icon={<ReloadOutlined />} onClick={() => refetch()}>
-            刷新
-          </Button>
-          <Button icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
-            上传
-          </Button>
-          <Button
-            type="primary"
-            icon={<DatabaseOutlined />}
-            loading={reindexMutation.isLoading}
-            onClick={() => reindexMutation.mutate()}
-          >
-            重建索引
-          </Button>
-        </Space>
-      </Space>
-
-      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-        <Col xs={12} sm={6}>
-          <Card size="small">
-            <Statistic title="文档总数" value={stats?.document_count ?? '-'} loading={statsLoading} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small">
-            <Statistic title="已索引文档" value={stats?.indexed_document_count ?? '-'} loading={statsLoading} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small">
-            <Statistic title="向量片段" value={stats?.indexed_chunks ?? '-'} loading={statsLoading} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card size="small">
-            <Statistic title="向量库" value={stats?.vector_store ?? 'chroma'} loading={statsLoading} />
-          </Card>
-        </Col>
-      </Row>
-
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="支持格式"
-        description={
-          <>
-            {stats?.supported_extensions?.join(' ') || '.md .txt .pdf .docx'} · 目录{' '}
-            <Text code>{stats?.kb_path || 'knowledge_base/'}</Text>
-          </>
-        }
+  const toolbar = (
+    <>
+      <Input
+        className="grok-search-input"
+        placeholder="搜索文档…"
+        allowClear
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
       />
+      <label className="grok-inline-switch">
+        <span>变更后自动重建索引</span>
+        <Switch size="small" checked={autoReindexOnChange} onChange={setAutoReindexOnChange} />
+      </label>
+      <GrokToolBtn icon={<ReloadOutlined />} onClick={() => refetch()}>
+        刷新
+      </GrokToolBtn>
+      <GrokToolBtn icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
+        上传
+      </GrokToolBtn>
+      <GrokToolBtn
+        primary
+        icon={<DatabaseOutlined />}
+        disabled={reindexMutation.isLoading}
+        onClick={() => reindexMutation.mutate()}
+      >
+        {reindexMutation.isLoading ? '重建中…' : '重建索引'}
+      </GrokToolBtn>
+    </>
+  )
 
-      {isLoading ? (
-        <div style={{ textAlign: 'center', padding: 48 }}>
-          <Spin size="large" />
+  return (
+    <GrokShellLayout
+      title="知识库"
+      subtitle="上传、预览、删除文档并管理 RAG 向量索引"
+      toolbar={toolbar}
+    >
+      <div className="grok-stat-grid">
+        <div className="grok-stat-card">
+          <div className="grok-stat-label">文档总数</div>
+          <div className="grok-stat-value">{statsLoading ? '—' : stats?.document_count ?? 0}</div>
         </div>
-      ) : (
-        <Table
-          rowKey="id"
-          columns={columns}
-          dataSource={filtered}
-          pagination={{ pageSize: 10, showSizeChanger: !isMobile }}
-          scroll={{ x: isMobile ? 900 : undefined }}
-          size={isMobile ? 'small' : 'middle'}
-        />
-      )}
+        <div className="grok-stat-card">
+          <div className="grok-stat-label">已索引文档</div>
+          <div className="grok-stat-value">{statsLoading ? '—' : stats?.indexed_document_count ?? 0}</div>
+        </div>
+        <div className="grok-stat-card">
+          <div className="grok-stat-label">向量片段</div>
+          <div className="grok-stat-value">{statsLoading ? '—' : stats?.indexed_chunks ?? 0}</div>
+        </div>
+        <div className="grok-stat-card">
+          <div className="grok-stat-label">向量库</div>
+          <div className="grok-stat-value grok-stat-value-sm">{stats?.vector_store ?? 'chroma'}</div>
+        </div>
+      </div>
+
+      <GrokInfoBar>
+        <strong>支持格式</strong>
+        <span>{stats?.supported_extensions?.join(' ') || '.md .txt .pdf .docx'}</span>
+        <span>·</span>
+        <span>目录</span>
+        <code className="grok-inline-code">{stats?.kb_path || 'knowledge_base/'}</code>
+      </GrokInfoBar>
+
+      <section className="grok-panel grok-panel-flush">
+        {isLoading ? (
+          <div className="grok-page-loading is-compact">
+            <Spin size="large" />
+          </div>
+        ) : (
+          <Table
+            className="grok-table"
+            rowKey="id"
+            columns={columns}
+            dataSource={filtered}
+            pagination={{ pageSize: 10, showSizeChanger: !isMobile }}
+            scroll={{ x: isMobile ? 900 : undefined }}
+            size={isMobile ? 'small' : 'middle'}
+          />
+        )}
+      </section>
 
       <Modal
         title="上传知识库文档"
@@ -426,7 +391,7 @@ const KnowledgePage: React.FC = () => {
         }
       >
         {previewLoading ? (
-          <div style={{ textAlign: 'center', padding: 32 }}>
+          <div className="grok-page-loading is-compact">
             <Spin />
           </div>
         ) : preview ? (
@@ -437,29 +402,15 @@ const KnowledgePage: React.FC = () => {
             {preview.preview_type === 'binary' ? (
               <Alert type="info" message={preview.message || '该格式请下载后查看'} />
             ) : (
-              <pre
-                style={{
-                  maxHeight: 480,
-                  overflow: 'auto',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  background: '#f8fafc',
-                  padding: 16,
-                  borderRadius: 8,
-                  fontSize: 13,
-                  lineHeight: 1.6,
-                }}
-              >
-                {preview.content}
-              </pre>
+              <pre className="grok-code-block is-scroll">{preview.content}</pre>
             )}
-            <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+            <p className="grok-muted" style={{ marginTop: 12, marginBottom: 0 }}>
               大小 {formatSize(preview.size_bytes)} · {preview.content_type}
-            </Paragraph>
+            </p>
           </>
         ) : null}
       </Modal>
-    </div>
+    </GrokShellLayout>
   )
 }
 

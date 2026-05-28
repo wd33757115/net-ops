@@ -4,20 +4,17 @@ import ConversationPanel from './ConversationPanel'
 
 const { Sider } = Layout
 
-/** 桌面端对话列表侧栏 */
+/** 桌面端对话列表侧栏（ChatGPT 风格窄栏） */
 const ConversationSidebar: React.FC = () => {
   return (
     <Sider
-      width={280}
+      width={260}
       breakpoint="md"
       collapsedWidth={0}
       className="conversation-sider"
-      style={{
-        background: '#fff',
-        borderRight: '1px solid #e5e7eb',
-      }}
+      theme="light"
     >
-      <ConversationPanel showBrand />
+      <ConversationPanel />
     </Sider>
   )
 }

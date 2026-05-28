@@ -1,7 +1,8 @@
-# Test env: stop local processes and Docker middleware
+# Test env: stop local processes and Docker dependencies (middleware + Langfuse)
 param(
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
-    [switch]$KeepMiddleware
+    [switch]$KeepMiddleware,
+    [switch]$KeepLangfuse
 )
 
 $ErrorActionPreference = "Continue"
@@ -26,14 +27,25 @@ if (Test-Path $pidFile) {
 }
 
 Write-ColorOutput "[Step 2/3] Free ports 8000 / 8001 / 3000..." "Yellow"
-Stop-ProcessesOnPorts -Ports @(8000, 8001, 3000, 3001, 3002)
+# 3001 留给 Langfuse（deployment / docker/langfuse），勿释放以免误杀 Docker 转发进程
+# 3002 仅清理 Vite 等偶发占用的备用端口
+Stop-ProcessesOnPorts -Ports @(8000, 8001, 3000, 3002)
 
-if (-not $KeepMiddleware) {
-    Write-ColorOutput "[Step 3/3] Stop Docker middleware..." "Yellow"
-    $composeFile = Join-Path $ProjectRoot "deployment\docker-compose.middleware.yml"
-    if (Test-Path $composeFile) {
-        docker compose -f $composeFile down 2>$null
-        Write-ColorOutput "  [OK] Middleware stopped" "Green"
+if (-not $KeepMiddleware -or -not $KeepLangfuse) {
+    Write-ColorOutput "[Step 3/3] Stop Docker dependencies..." "Yellow"
+    $middlewareCompose = Join-Path $ProjectRoot "deployment\docker-compose.middleware.yml"
+    $langfuseCompose = Join-Path $ProjectRoot "docker\langfuse\docker-compose.yml"
+
+    if ($KeepMiddleware) {
+        Write-ColorOutput "  [SKIP] Middleware (KeepMiddleware)" "Gray"
+    } else {
+        Invoke-DockerComposeDown -ComposeFile $middlewareCompose -Label "Middleware" | Out-Null
+    }
+
+    if ($KeepLangfuse) {
+        Write-ColorOutput "  [SKIP] Langfuse (KeepLangfuse)" "Gray"
+    } else {
+        Invoke-DockerComposeDown -ComposeFile $langfuseCompose -Label "Langfuse" | Out-Null
     }
 }
 

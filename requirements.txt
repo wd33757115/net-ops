@@ -36,6 +36,7 @@ python-docx>=1.1.0
 docxtpl>=0.16.7
 
 pyyaml>=6.0
+langfuse>=2.0.0,<3.0.0
 
 
 black>=24.0.*

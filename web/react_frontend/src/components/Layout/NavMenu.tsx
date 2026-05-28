@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react'
-import { Button, Menu, Space, Tag } from 'antd'
+import { Button, Menu, Tag } from 'antd'
 import {
   MessageOutlined,
   AppstoreOutlined,
@@ -48,16 +48,17 @@ const NavMenu: React.FC<NavMenuProps> = ({ onNavigate }) => {
   }
 
   return (
-    <>
-      <div style={{ padding: '16px 16px 8px', fontWeight: 700, fontSize: 16, color: '#111827' }}>
-        NetOps Agent
+    <div className="app-nav-menu">
+      <div className="app-nav-brand">
+        <span className="app-nav-logo">NetOps</span>
+        <span className="app-nav-sub">Agent</span>
       </div>
       {user && (
-        <div style={{ padding: '0 16px 8px' }}>
-          <Space direction="vertical" size={4} style={{ width: '100%' }}>
-            <span style={{ fontSize: 13, color: '#374151' }}>{user.username}</span>
-            <Tag color="blue">{user.role}</Tag>
-          </Space>
+        <div className="app-nav-user">
+          <span className="app-nav-username">{user.username}</span>
+          <Tag bordered={false} color="processing" className="app-nav-role">
+            {user.role}
+          </Tag>
         </div>
       )}
       <Menu
@@ -68,14 +69,14 @@ const NavMenu: React.FC<NavMenuProps> = ({ onNavigate }) => {
           navigate(key)
           onNavigate?.()
         }}
-        style={{ borderInlineEnd: 'none', marginTop: 8 }}
+        className="app-nav-items"
       />
-      <div style={{ padding: 16, marginTop: 'auto' }}>
-        <Button icon={<LogoutOutlined />} block onClick={handleLogout}>
+      <div className="app-nav-footer">
+        <Button type="text" icon={<LogoutOutlined />} block onClick={handleLogout}>
           退出登录
         </Button>
       </div>
-    </>
+    </div>
   )
 }
 

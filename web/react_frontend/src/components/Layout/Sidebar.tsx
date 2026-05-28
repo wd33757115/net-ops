@@ -8,14 +8,10 @@ const { Sider } = Layout
 const AppSidebar: React.FC = () => {
   return (
     <Sider
-      width={200}
+      width={220}
       theme="light"
       breakpoint="md"
       collapsedWidth={0}
-      style={{
-        borderRight: '1px solid #e5e7eb',
-        background: '#fff',
-      }}
       className="app-nav-sider"
     >
       <NavMenu />

@@ -1,5 +1,10 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const harmonyFontDist = path.resolve(__dirname, 'node_modules/harmonyos-sans-sc-webfont-splitted/dist')
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -15,6 +20,13 @@ export default defineConfig(({ mode }) => {
         },
       },
     ],
+    resolve: {
+      alias: {
+        '@harmony-font-regular.css': path.join(harmonyFontDist, 'Regular.css'),
+        '@harmony-font-medium.css': path.join(harmonyFontDist, 'Medium.css'),
+        '@harmony-font-semibold.css': path.join(harmonyFontDist, 'Semibold.css'),
+      },
+    },
     optimizeDeps: {
       needsInterop: ['react', 'react-dom', 'react-dom/client'],
     },

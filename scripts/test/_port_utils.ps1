@@ -186,6 +186,60 @@ function Test-DockerAvailable {
     return $false
 }
 
+function Invoke-DockerComposeUp {
+    param(
+        [string]$ComposeFile,
+        [string]$Label = "compose"
+    )
+    if (-not (Test-Path $ComposeFile)) {
+        Write-ColorOutput "  [SKIP] $Label compose not found: $ComposeFile" "Gray"
+        return $false
+    }
+    Write-ColorOutput "  Starting $Label..." "Gray"
+    docker compose -f $ComposeFile up -d --remove-orphans 2>&1 | ForEach-Object { Write-Host "    $_" }
+    if ($LASTEXITCODE -ne 0) {
+        Write-ColorOutput "  [ERROR] $Label docker compose up failed" "Red"
+        return $false
+    }
+    return $true
+}
+
+function Invoke-DockerComposeDown {
+    param(
+        [string]$ComposeFile,
+        [string]$Label = "compose"
+    )
+    if (-not (Test-Path $ComposeFile)) {
+        return $true
+    }
+    docker compose -f $ComposeFile down 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-ColorOutput "  [OK] $Label stopped" "Green"
+        return $true
+    }
+    Write-ColorOutput "  [WARN] $Label docker compose down failed" "Yellow"
+    return $false
+}
+
+function Wait-TcpPortReady {
+    param(
+        [int]$Port,
+        [string]$Label,
+        [int]$TimeoutSec = 90,
+        [int]$IntervalSec = 2
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        if ((Get-ListeningPidsOnPort -Port $Port).Count -gt 0) {
+            Write-ColorOutput "  [OK] $Label port $Port is listening" "Green"
+            return $true
+        }
+        Start-Sleep -Seconds $IntervalSec
+    }
+    Write-ColorOutput "  [ERROR] $Label port $Port not ready after ${TimeoutSec}s" "Red"
+    return $false
+}
+
 function Get-DockerContainersRunning {
     param([string[]]$Names)
     $running = @()

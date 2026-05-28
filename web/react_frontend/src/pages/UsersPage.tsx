@@ -1,23 +1,19 @@
 import React, { useMemo, useState } from 'react'
 import {
-  Button,
   Form,
   Input,
   Modal,
   Select,
-  Space,
   Switch,
   Table,
-  Tag,
-  Typography,
   message,
 } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useMutation, useQuery, useQueryClient } from 'react-query'
+import GrokShellLayout from '../components/layout/GrokShellLayout'
+import { GrokChip, GrokRowAction, GrokToolBtn } from '../components/ui/GrokUi'
 import { ManagedUser, userAdminApi } from '../services/api'
-
-const { Title, Text } = Typography
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'admin — 管理员' },
@@ -39,6 +35,8 @@ const UsersPage: React.FC = () => {
     userAdminApi.list,
     { refetchOnWindowFocus: false }
   )
+
+  const activeCount = users.filter((u) => u.is_active).length
 
   const createMutation = useMutation(userAdminApi.create, {
     onSuccess: () => {
@@ -83,14 +81,14 @@ const UsersPage: React.FC = () => {
         title: '角色',
         dataIndex: 'role',
         key: 'role',
-        render: (role: string) => <Tag color={role === 'admin' ? 'red' : role === 'operator' ? 'blue' : 'default'}>{role}</Tag>,
+        render: (role: string) => <GrokChip tone={role === 'admin' ? 'warn' : 'default'}>{role}</GrokChip>,
       },
       {
         title: '状态',
         dataIndex: 'is_active',
         key: 'is_active',
         render: (active: boolean) => (
-          <Tag color={active ? 'success' : 'default'}>{active ? '启用' : '禁用'}</Tag>
+          <GrokChip tone={active ? 'ok' : 'default'}>{active ? '启用' : '禁用'}</GrokChip>
         ),
       },
       {
@@ -103,10 +101,8 @@ const UsersPage: React.FC = () => {
         title: '操作',
         key: 'actions',
         render: (_, record) => (
-          <Space size="small">
-            <Button
-              type="link"
-              size="small"
+          <span className="grok-row-actions">
+            <GrokRowAction
               onClick={() => {
                 setEditUser(record)
                 editForm.setFieldsValue({
@@ -117,43 +113,57 @@ const UsersPage: React.FC = () => {
               }}
             >
               编辑
-            </Button>
-            <Button type="link" size="small" onClick={() => setResetUser(record)}>
-              重置密码
-            </Button>
-          </Space>
+            </GrokRowAction>
+            <GrokRowAction onClick={() => setResetUser(record)}>重置密码</GrokRowAction>
+          </span>
         ),
       },
     ],
     [editForm]
   )
 
-  return (
-    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
-      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <Title level={3} style={{ margin: 0 }}>
-            账户管理
-          </Title>
-          <Text type="secondary">创建用户、分配角色、启用/禁用账号与重置密码</Text>
-        </div>
-        <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => refetch()}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            新建用户
-          </Button>
-        </Space>
-      </Space>
+  const toolbar = (
+    <>
+      <GrokToolBtn icon={<ReloadOutlined />} onClick={() => refetch()}>
+        刷新
+      </GrokToolBtn>
+      <GrokToolBtn primary icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+        新建用户
+      </GrokToolBtn>
+    </>
+  )
 
-      <Table
-        rowKey="id"
-        loading={isLoading}
-        columns={columns}
-        dataSource={users}
-        pagination={{ pageSize: 10, showSizeChanger: true }}
-      />
+  return (
+    <GrokShellLayout
+      title="账户管理"
+      subtitle="创建用户、分配角色、启用/禁用账号与重置密码"
+      toolbar={toolbar}
+    >
+      <div className="grok-stat-grid">
+        <div className="grok-stat-card">
+          <div className="grok-stat-label">用户总数</div>
+          <div className="grok-stat-value">{isLoading ? '—' : users.length}</div>
+        </div>
+        <div className="grok-stat-card">
+          <div className="grok-stat-label">已启用</div>
+          <div className="grok-stat-value">{isLoading ? '—' : activeCount}</div>
+        </div>
+        <div className="grok-stat-card">
+          <div className="grok-stat-label">已禁用</div>
+          <div className="grok-stat-value">{isLoading ? '—' : users.length - activeCount}</div>
+        </div>
+      </div>
+
+      <section className="grok-panel grok-panel-flush">
+        <Table
+          className="grok-table"
+          rowKey="id"
+          loading={isLoading}
+          columns={columns}
+          dataSource={users}
+          pagination={{ pageSize: 10, showSizeChanger: true }}
+        />
+      </section>
 
       <Modal
         title="新建用户"
@@ -246,7 +256,7 @@ const UsersPage: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
-    </div>
+    </GrokShellLayout>
   )
 }
 

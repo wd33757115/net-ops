@@ -4,14 +4,15 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# 加载环境变量
-load_dotenv()
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = BASE_DIR.parent.parent
+
+# 统一加载仓库根目录 .env（与 FastAPI pydantic Settings 一致）
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(BASE_DIR / ".env")  # 可选：django_backend 本地覆盖
 
 # 允许 BFF 引用仓库 src/*（token_store、security 等）
-PROJECT_ROOT = BASE_DIR.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -186,7 +187,7 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': False,
     'AUTH_HEADER_TYPES': ('Bearer',),
     'SIGNING_KEY': os.getenv('JWT_SECRET_KEY', SECRET_KEY),
-    'ALGORITHM': 'HS256',
+    'ALGORITHM': os.getenv('JWT_ALGORITHM', 'HS256'),
 }
 
 

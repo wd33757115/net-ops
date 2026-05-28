@@ -41,7 +41,7 @@ import uuid
 import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
 
 from src.agents.supervisor.graph_v2 import compiled_graph_v2
@@ -49,6 +49,7 @@ from src.auth.dependencies import get_current_user, get_optional_user, require_r
 from src.auth.models import CurrentUser
 from src.gateway.audit_service import write_audit_log
 from src.gateway.bff_security import is_enforce_bff_origin_enabled
+from src.gateway.chat_stream import stream_supervisor_chat
 
 
 def get_supervisor_graph():
@@ -487,6 +488,49 @@ async def chat_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Agent invocation failed: {str(e)}"
         )
+
+
+@app.post("/api/v1/chat/stream", tags=["Chat"])
+async def chat_stream_endpoint(
+    request: ChatRequest,
+    http_request: Request,
+    user: CurrentUser | None = Depends(get_optional_user),
+):
+    """SSE 流式聊天：实时推送 LangGraph 节点进度 + Langfuse trace。"""
+    agent_graph = app.state.agent_graph
+    if not agent_graph:
+        try:
+            agent_graph = get_supervisor_graph()
+            app.state.agent_graph = agent_graph
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Agent Graph loading failed: {str(exc)}",
+            )
+
+    enforce_auth = is_enforce_bff_origin_enabled()
+
+    async def event_generator():
+        async for event in stream_supervisor_chat(
+            request=request,
+            http_request=http_request,
+            user=user,
+            agent_graph=agent_graph,
+            enforce_auth=enforce_auth,
+        ):
+            event_type = event.get("event", "message")
+            data = event.get("data", "")
+            yield f"event: {event_type}\ndata: {data}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.websocket("/ws/v1/chat")

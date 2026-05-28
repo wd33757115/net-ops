@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react'
-import { Button, Col, Form, Input, Modal, Row, Select, Space, Typography, message, Spin, Empty } from 'antd'
+import { Button, Col, Form, Input, Modal, Row, Select, Spin, Empty, message } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from 'react-query'
 import SkillCard from '../components/SkillCard'
 import SkillEditorModal from '../components/SkillEditorModal'
+import GrokShellLayout from '../components/layout/GrokShellLayout'
+import { GrokToolBtn } from '../components/ui/GrokUi'
 import { skillApi, SkillItem } from '../services/api'
-
-const { Title, Text } = Typography
 
 const SkillsPage: React.FC = () => {
   const queryClient = useQueryClient()
@@ -73,34 +73,36 @@ const SkillsPage: React.FC = () => {
     }
   }
 
-  return (
-    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
-      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <Title level={3} style={{ margin: 0 }}>Skills 管理</Title>
-          <Text type="secondary">查看、启用、编辑与热重载 Agent Skills</Text>
-        </div>
-        <Space>
-          <Input.Search
-            placeholder="搜索 Skill..."
-            allowClear
-            onSearch={setSearch}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: 260 }}
-          />
-          <Button icon={<ReloadOutlined />} onClick={() => refetch()}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            新建 Skill
-          </Button>
-        </Space>
-      </Space>
+  const toolbar = (
+    <>
+      <Input
+        className="grok-search-input"
+        placeholder="搜索 Skill…"
+        allowClear
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <GrokToolBtn icon={<ReloadOutlined />} onClick={() => refetch()}>
+        刷新
+      </GrokToolBtn>
+      <GrokToolBtn primary icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+        新建 Skill
+      </GrokToolBtn>
+    </>
+  )
 
+  return (
+    <GrokShellLayout
+      title="Skills"
+      subtitle="查看、启用、编辑与热重载 Agent Skills"
+      toolbar={toolbar}
+    >
       {isLoading ? (
-        <div style={{ textAlign: 'center', padding: 80 }}><Spin size="large" /></div>
+        <div className="grok-page-loading">
+          <Spin size="large" />
+        </div>
       ) : filtered.length === 0 ? (
-        <Empty description="暂无 Skill" />
+        <Empty description="暂无 Skill" className="grok-empty" />
       ) : (
         <Row gutter={[16, 16]}>
           {filtered.map((skill) => (
@@ -183,7 +185,7 @@ const SkillsPage: React.FC = () => {
         onClose={() => setEditName(null)}
         onSaved={() => queryClient.invalidateQueries('skills')}
       />
-    </div>
+    </GrokShellLayout>
   )
 }
 

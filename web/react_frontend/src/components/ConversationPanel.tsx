@@ -1,27 +1,26 @@
 import React, { useState } from 'react'
-import { Button, List, Typography, Upload, message, Spin, Popconfirm } from 'antd'
-import { PlusOutlined, FileTextOutlined, FolderOpenOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Button, Typography, message, Spin, Popconfirm, Tooltip } from 'antd'
+import {
+  PlusOutlined,
+  MessageOutlined,
+  DeleteOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons'
 import { useChatStore, Conversation } from '../store/useChatStore'
-import { chatApi } from '../services/api'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 interface ConversationPanelProps {
-  /** 手机端选中对话或新建后关闭抽屉 */
   onClose?: () => void
-  /** 是否显示顶部品牌区（桌面侧栏内显示，手机抽屉内可省略） */
+  /** 保留参数兼容；品牌信息已移至主导航 */
   showBrand?: boolean
 }
 
-const ConversationPanel: React.FC<ConversationPanelProps> = ({
-  onClose,
-  showBrand = true,
-}) => {
+const ConversationPanel: React.FC<ConversationPanelProps> = ({ onClose }) => {
   const {
     conversations,
     currentConversationId,
     setCurrentConversation,
-    setUploadedFile,
     loadConversations,
     loadConversationDetail,
     deleteConversation,
@@ -29,40 +28,7 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
   } = useChatStore()
 
   const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
-
-  const handleFileUpload = (file: File) => {
-    if (!currentConversationId) {
-      message.warning('请先选择或创建一个对话')
-      return Upload.LIST_IGNORE
-    }
-
-    setUploading(true)
-    const reader = new FileReader()
-    reader.onload = async () => {
-      try {
-        const result = reader.result as string
-        const base64 = result.includes(',') ? result.split(',')[1] : result
-        const uploadResult = await chatApi.uploadFile({
-          thread_id: currentConversationId,
-          filename: file.name,
-          file_content: base64,
-        })
-        setUploadedFile({ name: file.name, path: uploadResult.file_path })
-        message.success(uploadResult.message || `文件 ${file.name} 已上传`)
-      } catch {
-        message.error('文件上传失败')
-      } finally {
-        setUploading(false)
-      }
-    }
-    reader.onerror = () => {
-      message.error('读取文件失败')
-      setUploading(false)
-    }
-    reader.readAsDataURL(file)
-    return false
-  }
+  const [hoverId, setHoverId] = useState<string | null>(null)
 
   const handleSelectConversation = async (conv: Conversation) => {
     setCurrentConversation(conv.id)
@@ -107,134 +73,78 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        background: '#fff',
-      }}
-    >
-      {showBrand && (
-        <div style={{ padding: '16px 16px 8px' }}>
-          <Title level={4} style={{ margin: 0, color: '#111827' }}>
-            对话与文件
-          </Title>
-          <Text type="secondary" style={{ fontSize: 13 }}>
-            网络运维智能助手
-          </Text>
-        </div>
-      )}
-
-      <div style={{ padding: '0 16px 12px', display: 'flex', gap: 8 }}>
+    <div className="conversation-panel">
+      <div className="conversation-panel-toolbar">
         <Button
-          type="primary"
+          type="default"
           icon={<PlusOutlined />}
           block
+          className="conversation-new-btn"
           onClick={handleNewConversation}
-          style={{ borderRadius: 8, background: '#3b82f6', flex: 1 }}
         >
-          新建对话
+          新对话
         </Button>
-        <Button
-          icon={<ReloadOutlined />}
-          onClick={loadConversations}
-          loading={loading}
-          style={{ borderRadius: 8 }}
-        />
+        <Tooltip title="刷新列表">
+          <Button
+            type="text"
+            icon={<ReloadOutlined />}
+            onClick={loadConversations}
+            loading={loading}
+            className="conversation-refresh-btn"
+          />
+        </Tooltip>
       </div>
 
-      <div style={{ padding: '0 16px 12px' }}>
-        <Upload.Dragger
-          accept=".xlsx,.xls,.csv"
-          fileList={[]}
-          beforeUpload={handleFileUpload}
-          showUploadList={false}
-          disabled={uploading}
-          style={{ borderRadius: 8 }}
-        >
-          <p className="ant-upload-drag-icon">
-            <FolderOpenOutlined style={{ fontSize: 28, color: '#64748b' }} />
-          </p>
-          <p className="ant-upload-text" style={{ fontSize: 13 }}>
-            点击或拖拽上传文件
-          </p>
-          <p className="ant-upload-hint" style={{ fontSize: 12 }}>
-            支持 Excel、CSV 格式
-          </p>
-        </Upload.Dragger>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 16px', minHeight: 0 }}>
-        <Text strong style={{ display: 'block', padding: '8px 12px', fontSize: 12, color: '#64748b' }}>
-          对话历史
-        </Text>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '32px 0' }}>
+      <div className="conversation-panel-list">
+        <Text className="conversation-panel-label">最近</Text>
+        {loading && conversations.length === 0 ? (
+          <div className="conversation-panel-loading">
             <Spin size="small" />
           </div>
+        ) : conversations.length === 0 ? (
+          <Text type="secondary" className="conversation-panel-empty">
+            暂无对话，点击上方开始
+          </Text>
         ) : (
-          <List
-            dataSource={conversations}
-            renderItem={(conv) => (
-              <List.Item
-                style={{
-                  cursor: 'pointer',
-                  borderRadius: 8,
-                  padding: '10px 12px',
-                  marginBottom: 4,
-                  background: conv.id === currentConversationId ? '#eff6ff' : 'transparent',
-                  borderLeft:
-                    conv.id === currentConversationId ? '3px solid #3b82f6' : '3px solid transparent',
-                }}
-                onClick={() => handleSelectConversation(conv)}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    flex: 1,
-                    minWidth: 0,
-                  }}
+          <ul className="conversation-history">
+            {conversations.map((conv) => {
+              const active = conv.id === currentConversationId
+              return (
+                <li
+                  key={conv.id}
+                  className={`conversation-history-item${active ? ' is-active' : ''}`}
+                  onMouseEnter={() => setHoverId(conv.id)}
+                  onMouseLeave={() => setHoverId(null)}
+                  onClick={() => handleSelectConversation(conv)}
                 >
-                  <FileTextOutlined style={{ color: '#64748b', fontSize: 16, flexShrink: 0 }} />
-                  <div style={{ overflow: 'hidden', flex: 1 }}>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        display: 'block',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {conv.title}
-                    </Text>
+                  <MessageOutlined className="conversation-history-icon" />
+                  <div className="conversation-history-body">
+                    <span className="conversation-history-title">{conv.title}</span>
                     {conv.updatedAt && (
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {formatDate(conv.updatedAt)}
-                      </Text>
+                      <span className="conversation-history-time">{formatDate(conv.updatedAt)}</span>
                     )}
                   </div>
-                </div>
-                <Popconfirm
-                  title="确定删除这个对话吗？"
-                  onConfirm={() => handleDeleteConversation(conv.id)}
-                  okText="确定"
-                  cancelText="取消"
-                >
-                  <Button
-                    type="text"
-                    icon={<DeleteOutlined />}
-                    style={{ color: '#ef4444', padding: 4, flexShrink: 0 }}
-                    onClick={(e) => e.stopPropagation()}
-                    loading={deletingId === conv.id}
-                  />
-                </Popconfirm>
-              </List.Item>
-            )}
-          />
+                  {(hoverId === conv.id || active) && (
+                    <Popconfirm
+                      title="删除此对话？"
+                      onConfirm={() => handleDeleteConversation(conv.id)}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        className="conversation-history-delete"
+                        icon={<DeleteOutlined />}
+                        loading={deletingId === conv.id}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Popconfirm>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
         )}
       </div>
     </div>

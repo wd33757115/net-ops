@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 
@@ -153,3 +154,55 @@ async def proxy_to_fastapi(
         timeout=timeout,
         extra_headers=extra_headers,
     )
+
+
+async def proxy_stream_to_fastapi(
+    method: str,
+    fastapi_path: str,
+    request_id: str,
+    data: dict | None = None,
+    timeout: int | None = None,
+    extra_headers: dict | None = None,
+):
+    """流式代理 FastAPI SSE（text/event-stream）。"""
+    from django.http import StreamingHttpResponse
+
+    client = _get_client()
+    url = _build_url(fastapi_path)
+    headers = _build_headers(request_id, extra_headers)
+    req_kwargs: dict[str, Any] = {"headers": headers}
+    if timeout is not None:
+        req_kwargs["timeout"] = httpx.Timeout(timeout)
+    if data is not None and method in ("POST", "PUT", "PATCH"):
+        req_kwargs["json"] = data
+
+    async def stream_upstream():
+        try:
+            async with client.stream(method, url, **req_kwargs) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    try:
+                        payload = json.loads(body.decode("utf-8"))
+                        message = _extract_upstream_error(payload)
+                    except Exception:
+                        message = body.decode("utf-8", errors="replace") or "Upstream error"
+                    error_event = f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+                    yield error_event.encode("utf-8")
+                    return
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+        except httpx.TimeoutException:
+            err = f"event: error\ndata: {json.dumps({'message': 'Upstream timeout'}, ensure_ascii=False)}\n\n"
+            yield err.encode("utf-8")
+        except httpx.ConnectError as exc:
+            err = f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
+            yield err.encode("utf-8")
+        except Exception as exc:
+            logger.error(f"[{request_id}] Stream proxy error: {exc}")
+            err = f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
+            yield err.encode("utf-8")
+
+    response = StreamingHttpResponse(stream_upstream(), content_type="text/event-stream")
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
+    return response

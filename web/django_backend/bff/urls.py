@@ -17,6 +17,7 @@ urlpatterns = [
         name="bff_user_reset_password",
     ),
     path("chat/", chat.proxy_chat, name="bff_chat"),
+    path("chat/stream/", chat.proxy_chat_stream, name="bff_chat_stream"),
     path("chat/upload/", upload.proxy_chat_upload, name="bff_chat_upload"),
     path("health/", health.proxy_health, name="bff_health"),
     path("health/diagnostics/", health.proxy_health_diagnostics, name="bff_health_diagnostics"),

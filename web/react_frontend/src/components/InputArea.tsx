@@ -1,7 +1,9 @@
 import React, { useState } from 'react'
-import { Input, Button, Space, Tag } from 'antd'
-import { SendOutlined, CloseOutlined, FileTextOutlined } from '@ant-design/icons'
+import { Input, Upload, message } from 'antd'
+import { ArrowUpOutlined, CloseOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useChatStore } from '../store/useChatStore'
+import { chatApi } from '../services/api'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const { TextArea } = Input
 
@@ -12,8 +14,11 @@ interface InputAreaProps {
 }
 
 const InputArea: React.FC<InputAreaProps> = ({ onSend, loading, compact }) => {
+  const isMobile = useIsMobile()
+  const isCompact = compact ?? isMobile
   const [text, setText] = useState('')
-  const { uploadedFile, setUploadedFile } = useChatStore()
+  const [uploading, setUploading] = useState(false)
+  const { uploadedFile, setUploadedFile, currentConversationId } = useChatStore()
 
   const handleSend = () => {
     if (text.trim() || uploadedFile) {
@@ -29,90 +34,84 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, loading, compact }) => {
     }
   }
 
+  const handleFileUpload = (file: File) => {
+    if (!currentConversationId) {
+      message.warning('请先选择或创建一个对话')
+      return Upload.LIST_IGNORE
+    }
+
+    setUploading(true)
+    const reader = new FileReader()
+    reader.onload = async () => {
+      try {
+        const result = reader.result as string
+        const base64 = result.includes(',') ? result.split(',')[1] : result
+        const uploadResult = await chatApi.uploadFile({
+          thread_id: currentConversationId,
+          filename: file.name,
+          file_content: base64,
+        })
+        setUploadedFile({ name: file.name, path: uploadResult.file_path })
+      } catch {
+        message.error('文件上传失败')
+      } finally {
+        setUploading(false)
+      }
+    }
+    reader.onerror = () => {
+      message.error('读取文件失败')
+      setUploading(false)
+    }
+    reader.readAsDataURL(file)
+    return false
+  }
+
+  const canSend = Boolean(text.trim() || uploadedFile)
+
   return (
-    <div
-      className="chat-input-area"
-      style={{
-        padding: compact ? '10px 12px calc(12px + env(safe-area-inset-bottom))' : '16px 24px 24px',
-        borderTop: '1px solid #e5e7eb',
-        background: '#ffffff',
-        flexShrink: 0,
-      }}
-    >
+    <div className={`grok-input-shell${isCompact ? ' is-compact' : ''}`}>
       {uploadedFile && (
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          marginBottom: '12px',
-          background: '#f0fdf4',
-          border: '1px solid #bbf7d0',
-          borderRadius: '8px',
-          padding: '8px 12px'
-        }}>
-          <FileTextOutlined style={{ color: '#16a34a', marginRight: '8px' }} />
-          <span style={{ flex: 1, color: '#166534', fontSize: '14px' }}>
-            {uploadedFile.name}
-          </span>
-          <Button 
-            type="text" 
-            icon={<CloseOutlined />}
-            size="small"
-            onClick={() => setUploadedFile(null)}
-            style={{ color: '#991b1b' }}
-          />
+        <div className="grok-input-attachment">
+          <FileTextOutlined />
+          <span>{uploadedFile.name}</span>
+          <button type="button" className="grok-input-attachment-remove" onClick={() => setUploadedFile(null)}>
+            <CloseOutlined />
+          </button>
         </div>
       )}
 
-      <div style={{ 
-        display: 'flex',
-        gap: '12px',
-        alignItems: 'flex-end'
-      }}>
-        <div style={{ flex: 1 }}>
-          <TextArea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="请输入您的运维问题或指令..."
-            autoSize={{ minRows: 1, maxRows: 6 }}
-            disabled={loading}
-            style={{
-              borderRadius: '12px',
-              border: '1px solid #e5e7eb',
-              resize: 'none',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.06)'
-            }}
-          />
-          {!compact && (
-            <div
-              style={{
-                textAlign: 'right',
-                fontSize: 12,
-                color: '#9ca3af',
-                marginTop: 4,
-              }}
-            >
-              Enter 发送 · Shift + Enter 换行
-            </div>
-          )}
-        </div>
-
-        <Button
-          type="primary"
-          icon={<SendOutlined />}
-          onClick={handleSend}
-          loading={loading}
-          disabled={!text.trim() && !uploadedFile}
-          style={{
-            height: compact ? 44 : 48,
-            borderRadius: 12,
-            paddingLeft: compact ? 14 : 20,
-            paddingRight: compact ? 14 : 20,
-            background: '#3b82f6',
-          }}
+      <div className="grok-input-pill">
+        <Upload
+          accept=".xlsx,.xls,.csv"
+          showUploadList={false}
+          beforeUpload={handleFileUpload}
+          disabled={uploading || loading}
         >
-          {compact ? null : '发送'}
-        </Button>
+          <button type="button" className="grok-input-plus" aria-label="上传附件" disabled={uploading || loading}>
+            <PlusOutlined />
+          </button>
+        </Upload>
+
+        <TextArea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="有什么想问的？"
+          autoSize={{ minRows: 1, maxRows: 8 }}
+          disabled={loading}
+          variant="borderless"
+          className="grok-input-field"
+        />
+
+        <button
+          type="button"
+          className={`grok-input-send${canSend ? ' is-ready' : ''}`}
+          onClick={handleSend}
+          disabled={!canSend || loading}
+          aria-label="发送"
+        >
+          <ArrowUpOutlined />
+        </button>
       </div>
     </div>
   )

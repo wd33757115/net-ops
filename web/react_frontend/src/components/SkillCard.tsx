@@ -1,7 +1,8 @@
 import React from 'react'
-import { Card, Switch, Button, Space, Tag, Typography } from 'antd'
+import { Card, Switch, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons'
 import { SkillItem } from '../services/api'
+import { GrokChip, GrokToolBtn } from './ui/GrokUi'
 
 const { Text, Paragraph } = Typography
 
@@ -25,45 +26,46 @@ const SkillCard: React.FC<SkillCardProps> = ({
   return (
     <Card
       size="small"
-      style={{ borderRadius: 12, height: '100%' }}
+      className="grok-skill-card"
       title={
-        <Space>
-          <Text strong>{skill.name}</Text>
-          <Tag color={skill.enabled ? 'green' : 'default'}>{skill.enabled ? 'active' : 'inactive'}</Tag>
-        </Space>
+        <span className="grok-skill-card-title">
+          <span>{skill.name}</span>
+          <GrokChip tone={skill.enabled ? 'ok' : 'default'}>
+            {skill.enabled ? 'active' : 'inactive'}
+          </GrokChip>
+        </span>
       }
-      extra={<Tag>{skill.category}</Tag>}
+      extra={<GrokChip>{skill.category}</GrokChip>}
     >
       <Paragraph type="secondary" ellipsis={{ rows: 2 }} style={{ minHeight: 44, marginBottom: 12 }}>
         {skill.description || '暂无描述'}
       </Paragraph>
-      <Space wrap size={[4, 4]} style={{ marginBottom: 12 }}>
+      <div className="grok-chip-row" style={{ marginBottom: 12 }}>
         {(skill.tags || []).slice(0, 4).map((tag) => (
-          <Tag key={tag}>{tag}</Tag>
+          <GrokChip key={tag}>{tag}</GrokChip>
         ))}
-      </Space>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      </div>
+      <div className="grok-skill-card-actions">
         <Text type="secondary" style={{ fontSize: 12 }}>
           v{skill.version || '1.0.0'}
         </Text>
-        <Space>
+        <span className="grok-skill-card-btns">
           <Switch
+            size="small"
             checked={skill.enabled}
             loading={loading}
             onChange={(checked) => onToggle(skill.name, checked)}
-            checkedChildren="开"
-            unCheckedChildren="关"
           />
-          <Button size="small" icon={<EyeOutlined />} onClick={() => onView(skill.name)}>
-            View
-          </Button>
-          <Button size="small" icon={<EditOutlined />} onClick={() => onEdit(skill.name)}>
-            Edit
-          </Button>
-          <Button size="small" icon={<ReloadOutlined />} onClick={() => onReload(skill.name)}>
-            Reload
-          </Button>
-        </Space>
+          <GrokToolBtn icon={<EyeOutlined />} onClick={() => onView(skill.name)}>
+            查看
+          </GrokToolBtn>
+          <GrokToolBtn icon={<EditOutlined />} onClick={() => onEdit(skill.name)}>
+            编辑
+          </GrokToolBtn>
+          <GrokToolBtn icon={<ReloadOutlined />} onClick={() => onReload(skill.name)}>
+            重载
+          </GrokToolBtn>
+        </span>
       </div>
     </Card>
   )

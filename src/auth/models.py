@@ -24,3 +24,7 @@ class CurrentUser(BaseModel):
 
     def is_admin(self) -> bool:
         return self.role == "admin"
+
+    def can_view_trace_detail(self) -> bool:
+        """admin/operator 可见完整执行步骤；viewer 仅摘要。"""
+        return self.role in {"admin", "operator"}

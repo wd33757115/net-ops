@@ -56,9 +56,12 @@ cd web\django_backend
 
 ### 2. 环境变量（根目录 `.env`）
 
+Django BFF 与 FastAPI **必须共用**同一组 JWT 配置（`start.ps1` 与 `settings.py` 均从仓库根 `.env` 读取）：
+
 ```env
 SECRET_KEY=your-shared-secret
 JWT_SECRET_KEY=your-shared-secret
+JWT_ALGORITHM=HS256
 BFF_REQUIRE_AUTH=true
 ENFORCE_BFF_ORIGIN=true
 REDIS_HOST=localhost
@@ -68,6 +71,57 @@ BFF_RATE_LIMIT_CHAT=30
 BFF_RATE_LIMIT_DEFAULT=60
 BFF_RATE_LIMIT_IN_DEBUG=false
 ```
+
+| 变量 | Django | FastAPI | 说明 |
+|------|--------|---------|------|
+| `JWT_SECRET_KEY` | `SIMPLE_JWT.SIGNING_KEY` | `Settings.JWT_SECRET_KEY` | 优先使用；未设则回退 `SECRET_KEY` |
+| `JWT_ALGORITHM` | `SIMPLE_JWT.ALGORITHM` | `Settings.JWT_ALGORITHM` | 默认 `HS256` |
+| `SECRET_KEY` | Django `SECRET_KEY` | — | 与 JWT 密钥建议保持一致 |
+
+## 认证流程
+
+```mermaid
+sequenceDiagram
+    participant R as React
+    participant B as Django BFF
+    participant F as FastAPI
+    participant G as LangGraph
+
+    R->>B: POST /api/auth/login/ (username/password)
+    B->>B: 签发 JWT (role, thread_id, session_id)
+    B-->>R: access + refresh + user
+
+    R->>B: API 请求 Authorization Bearer
+    B->>B: 校验 JWT / 黑名单 / 限流
+    B->>F: 代理 + X-User-* + X-Forwarded-From
+    F->>F: is_trusted_bff_request + resolve_current_user
+    F->>G: configurable.thread_id = user-{id}-{convSuffix}
+    G-->>F: Skill 执行结果
+    F-->>B: JSON
+    B-->>R: BffEnvelope
+```
+
+## BFF 可信头规范（`X-User-*`）
+
+FastAPI 仅在 **`X-Forwarded-From: django-bff`** 且 **`X-Internal-Request: true`** 时信任以下用户头（见 `src/gateway/bff_security.py`）。客户端直连 FastAPI 时不应信任这些头。
+
+| Header | 必填 | 示例 | 用途 |
+|--------|------|------|------|
+| `X-Forwarded-From` | 是 | `django-bff` | 标识请求来自 BFF |
+| `X-Internal-Request` | 是 | `true` | 内部转发标记 |
+| `X-User-Id` | 有登录时 | `42` | 业务数据 `user_id` 隔离 |
+| `X-User-Name` | 有登录时 | `operator` | 审计 / 展示 |
+| `X-User-Role` | 有登录时 | `operator` | RBAC（admin/operator/viewer） |
+| `X-User-Thread-Prefix` | 有登录时 | `user-42` | LangGraph checkpoint 前缀 |
+| `X-Session-Id` | 有登录时 | `sess-abc123` | 会话吊销（Redis 黑名单） |
+| `X-Request-ID` | 推荐 | UUID | 全链路追踪 |
+
+**LangGraph thread_id 规则**（REST 聊天，`src/gateway/main.py`）：
+
+- 未登录：`thread-{convSuffix}`
+- 已登录：`{thread_prefix}-{convSuffix}`，例如 `user-42-a2eba0d128b5`
+
+JWT access token 内嵌相同语义字段：`role`、`thread_id`（即 thread_prefix）、`session_id`。
 
 ### 3. 启动后访问
 
@@ -85,7 +139,7 @@ BFF_RATE_LIMIT_IN_DEBUG=false
   - WebSocket JWT 鉴权（`bff/ws_auth.py` + `consumers.py`）
   - 密码修改 `POST /api/auth/change-password/`
   - FastAPI 侧 `resolve_current_user` 校验黑名单
-- **阶段 6（可选）**：User 迁 PG、密码重置邮件、Langfuse 用户维度
+- **阶段 6（可选）**：User 迁 PG、密码重置邮件；Langfuse + SSE 见 [langfuse-sse-plan.md](./langfuse-sse-plan.md)（**已实现 MVP**）
 
 ## 账户管理（admin）
 
