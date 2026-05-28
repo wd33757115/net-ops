@@ -1,4 +1,4 @@
-import { api, getChatWebSocketUrl } from '../config/api'
+import { api, getChatWebSocketUrl, type AuthSession } from '../config/api'
 
 export interface ChatRequest {
   query: string
@@ -206,11 +206,67 @@ export const conversationApi = {
   }
 }
 
+export interface AuthUser {
+  id: number
+  username: string
+  email: string
+  role: string
+  thread_id?: string
+}
+
+export interface ManagedUser {
+  id: number
+  username: string
+  email: string
+  role: string
+  is_active: boolean
+  last_login: string | null
+  date_joined: string | null
+}
+
 export const authApi = {
   login: async (username: string, password: string) => {
     const response = await api.post('/auth/login/', { username, password })
-    return response.data as { access: string; refresh: string; user: { id: number; username: string; email: string } }
-  }
+    return response.data as AuthSession & { user: AuthUser }
+  },
+  refresh: async (refresh: string) => {
+    const response = await api.post('/auth/refresh/', { refresh })
+    return response.data as { access: string; refresh?: string }
+  },
+  logout: async () => {
+    const refresh = localStorage.getItem('refresh_token')
+    await api.post('/auth/logout/', refresh ? { refresh } : {})
+  },
+  changePassword: async (old_password: string, new_password: string) => {
+    const response = await api.post('/auth/change-password/', { old_password, new_password })
+    return response.data as { message: string }
+  },
+  me: async () => {
+    const response = await api.get('/auth/me/')
+    return response.data as AuthUser
+  },
+}
+
+export const userAdminApi = {
+  list: async (): Promise<ManagedUser[]> => {
+    const response = await api.get<ManagedUser[]>('/auth/users/')
+    return response.data
+  },
+  create: async (data: { username: string; password: string; role: string; email?: string }) => {
+    const response = await api.post<ManagedUser>('/auth/users/', data)
+    return response.data
+  },
+  update: async (
+    id: number,
+    data: Partial<Pick<ManagedUser, 'email' | 'role' | 'is_active'>>
+  ) => {
+    const response = await api.patch<ManagedUser>(`/auth/users/${id}/`, data)
+    return response.data
+  },
+  resetPassword: async (id: number, new_password: string) => {
+    const response = await api.post(`/auth/users/${id}/reset-password/`, { new_password })
+    return response.data as { message: string }
+  },
 }
 
 export const skillApi = {

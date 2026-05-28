@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     USE_SUPERVISOR_V2: bool = True
 
+    # 与 Django SIMPLE_JWT 共用（默认与 SECRET_KEY 一致，生产务必在 .env 中显式设置）
+    JWT_SECRET_KEY: str = "django-insecure-default-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+
     @property
     def postgres_url(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"

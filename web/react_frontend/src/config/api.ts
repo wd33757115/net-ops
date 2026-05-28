@@ -5,11 +5,27 @@ import { message } from 'antd'
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 export const TOKEN_KEY = 'access_token'
+export const REFRESH_TOKEN_KEY = 'refresh_token'
+export const USER_KEY = 'auth_user'
 
 export interface BffEnvelope<T = unknown> {
   success: boolean
   data: T
   error: string | null
+}
+
+export interface AuthSession {
+  access: string
+  refresh: string
+  role?: string
+  thread_id?: string
+  session_id?: string
+  user: {
+    id: number
+    username: string
+    email: string
+    role: string
+  }
 }
 
 export function isBffEnvelope(value: unknown): value is BffEnvelope {
@@ -30,6 +46,25 @@ export function getAccessToken(): string | null {
   return localStorage.getItem(TOKEN_KEY) || localStorage.getItem('access')
 }
 
+export function getRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_TOKEN_KEY)
+}
+
+export function saveAuthSession(session: AuthSession) {
+  saveAccessToken(session.access)
+  localStorage.setItem(REFRESH_TOKEN_KEY, session.refresh)
+  localStorage.setItem('refresh_token', session.refresh)
+  localStorage.setItem(USER_KEY, JSON.stringify(session.user))
+}
+
+export function clearAuthStorage() {
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem('access')
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
+  localStorage.removeItem('refresh_token')
+  localStorage.removeItem(USER_KEY)
+}
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 120000,
@@ -37,6 +72,30 @@ export const api = axios.create({
     'Content-Type': 'application/json'
   }
 })
+
+let refreshPromise: Promise<string | null> | null = null
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refresh = getRefreshToken()
+  if (!refresh) return null
+  if (!refreshPromise) {
+    refreshPromise = axios
+      .post<BffEnvelope<AuthSession>>(`${API_BASE_URL}/auth/refresh/`, { refresh })
+      .then((res) => {
+        const body = res.data
+        if (isBffEnvelope(body) && body.success && body.data?.access) {
+          saveAuthSession(body.data)
+          return body.data.access
+        }
+        return null
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshPromise = null
+      })
+  }
+  return refreshPromise
+}
 
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
@@ -59,8 +118,9 @@ api.interceptors.response.use(
     }
     return response
   },
-  (error: AxiosError<BffEnvelope | { error?: string; detail?: string }>) => {
+  async (error: AxiosError<BffEnvelope | { error?: string; detail?: string }>) => {
     const status = error.response?.status
+    const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
     const payload = error.response?.data
     const serverMessage =
       (isBffEnvelope(payload) ? payload.error : null) ||
@@ -68,10 +128,20 @@ api.interceptors.response.use(
       (payload && 'detail' in payload ? String(payload.detail) : undefined) ||
       error.message
 
-    if (status === 401) {
-      localStorage.removeItem(TOKEN_KEY)
-      localStorage.removeItem('access')
-      message.error('登录已过期，请重新登录')
+    if (status === 401 && original && !original._retry && !original.url?.includes('/auth/login')) {
+      original._retry = true
+      const newToken = await refreshAccessToken()
+      if (newToken) {
+        original.headers.Authorization = `Bearer ${newToken}`
+        return api(original)
+      }
+      clearAuthStorage()
+      if (!window.location.pathname.startsWith('/login')) {
+        message.error('登录已过期，请重新登录')
+        window.location.href = '/login'
+      }
+    } else if (status === 401) {
+      clearAuthStorage()
     } else if (status === 403) {
       message.error('没有权限执行此操作')
     } else if (status && status >= 500) {
@@ -82,21 +152,28 @@ api.interceptors.response.use(
   }
 )
 
-/** WebSocket 连接地址，统一经 Django（8001）代理 */
+/** WebSocket 连接地址，统一经 Django（8001）代理；携带 JWT 供 BFF 鉴权 */
 export function getChatWebSocketUrl(threadId?: string): string {
+  const token = getAccessToken()
   const wsBase = import.meta.env.VITE_WS_BASE_URL
   if (wsBase) {
-    let url = wsBase
+    const url = new URL(wsBase, window.location.origin)
     if (threadId) {
-      url += `${url.includes('?') ? '&' : '?'}thread_id=${encodeURIComponent(threadId)}`
+      url.searchParams.set('thread_id', threadId)
     }
-    return url
+    if (token) {
+      url.searchParams.set('token', token)
+    }
+    return url.toString()
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  let url = `${protocol}//${window.location.host}/ws/v1/chat`
+  const url = new URL(`${protocol}//${window.location.host}/ws/v1/chat`)
   if (threadId) {
-    url += `?thread_id=${encodeURIComponent(threadId)}`
+    url.searchParams.set('thread_id', threadId)
   }
-  return url
+  if (token) {
+    url.searchParams.set('token', token)
+  }
+  return url.toString()
 }

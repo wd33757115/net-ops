@@ -39,12 +39,16 @@ import json
 import uuid
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
 
 from src.agents.supervisor.graph_v2 import compiled_graph_v2
+from src.auth.dependencies import get_current_user, get_optional_user, require_role
+from src.auth.models import CurrentUser
+from src.gateway.audit_service import write_audit_log
+from src.gateway.bff_security import is_enforce_bff_origin_enabled
 
 
 def get_supervisor_graph():
@@ -316,7 +320,11 @@ async def chat_endpoint_legacy(request: ChatRequest):
 
 
 @app.post("/api/v1/chat", tags=["Chat"], response_model=ChatResponse, status_code=status.HTTP_200_OK)
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(
+    request: ChatRequest,
+    http_request: Request,
+    user: CurrentUser | None = Depends(get_optional_user),
+):
     """
     统一聊天接口（REST，异步执行）
 
@@ -326,19 +334,43 @@ async def chat_endpoint(request: ChatRequest):
     - RAG Metadata 过滤
     - 自动生成对话标题
     """
+    if is_enforce_bff_origin_enabled() and not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录")
+
+    if user and not user.can_execute_skills():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="当前角色仅可浏览，无法执行运维 Skill",
+        )
+
+    effective_user_id = user.user_id if user else request.user_id
+
     conv_service = get_conversation_service()
     conversation_id = request.thread_id
-    
+
     if not conversation_id:
-        conversation = conv_service.create_conversation(title="新对话")
+        conversation = conv_service.create_conversation(
+            title="新对话",
+            user_id=effective_user_id,
+        )
         conversation_id = conversation["id"]
     else:
-        conversation = conv_service.get_conversation(conversation_id)
+        if effective_user_id:
+            conversation = conv_service.get_conversation_for_user(conversation_id, effective_user_id)
+        else:
+            conversation = conv_service.get_conversation(conversation_id)
         if not conversation:
-            conversation = conv_service.create_conversation(title="新对话")
+            conversation = conv_service.create_conversation(
+                title="新对话",
+                user_id=effective_user_id,
+            )
             conversation_id = conversation["id"]
 
     thread_id = f"thread-{conversation_id.split('-')[-1]}"
+    if user and user.thread_prefix:
+        thread_id = f"{user.thread_prefix}-{conversation_id.split('-')[-1]}"
+
+    conv_service.update_conversation(conversation_id, thread_id=thread_id, user_id=effective_user_id)
 
     config = {
         "configurable": {"thread_id": thread_id}
@@ -365,6 +397,9 @@ async def chat_endpoint(request: ChatRequest):
             "task_id": str(uuid.uuid4()),
             "thread_id": thread_id,
         }
+        if user:
+            initial_state["user_id"] = user.user_id
+            initial_state["user_role"] = user.role
 
         if request.metadata_filters:
             initial_state["metadata_filters"] = request.metadata_filters
@@ -426,6 +461,16 @@ async def chat_endpoint(request: ChatRequest):
         # 生成对话标题
         title = conv_service.generate_title(conversation_id)
         conv_service.update_conversation(conversation_id, title=title)
+
+        write_audit_log(
+            action="chat",
+            user_id=effective_user_id,
+            username=user.username if user else None,
+            resource_type="conversation",
+            resource_id=conversation_id,
+            detail={"agent_type": next_agent, "query_len": len(request.query or "")},
+            ip_address=http_request.client.host if http_request.client else None,
+        )
 
         return ChatResponse(
             response=response_msg,
@@ -738,12 +783,16 @@ async def chat_upload_file(request: ChatFileUploadRequest):
 # =============================================================================
 
 @app.post("/api/v1/conversations", tags=["Conversations"], response_model=ConversationResponse)
-async def create_conversation(request: CreateConversationRequest):
+async def create_conversation(
+    request: CreateConversationRequest,
+    user: CurrentUser | None = Depends(get_optional_user),
+):
     """创建新对话"""
     conv_service = get_conversation_service()
+    user_id = user.user_id if user else request.user_id
     conversation = conv_service.create_conversation(
         title=request.title,
-        user_id=request.user_id,
+        user_id=user_id,
         thread_id=request.thread_id
     )
     
@@ -761,10 +810,18 @@ async def create_conversation(request: CreateConversationRequest):
 
 
 @app.get("/api/v1/conversations", tags=["Conversations"], response_model=list[ConversationResponse])
-async def get_conversations(user_id: str | None = None, limit: int = 20, offset: int = 0):
-    """获取对话列表"""
+async def get_conversations(
+    user_id: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    user: CurrentUser | None = Depends(get_optional_user),
+):
+    """获取对话列表（登录用户仅能看到自己的会话）"""
     conv_service = get_conversation_service()
-    conversations = conv_service.get_conversations(user_id=user_id, limit=limit, offset=offset)
+    effective_user_id = user.user_id if user else user_id
+    if is_enforce_bff_origin_enabled() and not effective_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录")
+    conversations = conv_service.get_conversations(user_id=effective_user_id, limit=limit, offset=offset)
     
     result = []
     for conv in conversations:
@@ -784,10 +841,19 @@ async def get_conversations(user_id: str | None = None, limit: int = 20, offset:
 
 
 @app.get("/api/v1/conversations/{conversation_id}", tags=["Conversations"], response_model=ConversationDetailResponse)
-async def get_conversation_detail(conversation_id: str):
+async def get_conversation_detail(
+    conversation_id: str,
+    user: CurrentUser | None = Depends(get_optional_user),
+):
     """获取对话详情（含消息）"""
     conv_service = get_conversation_service()
-    data = conv_service.get_conversation_with_messages(conversation_id)
+    if user:
+        conv = conv_service.get_conversation_for_user(conversation_id, user.user_id)
+        if not conv:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+        data = conv_service.get_conversation_with_messages(conversation_id)
+    else:
+        data = conv_service.get_conversation_with_messages(conversation_id)
     
     if not data:
         raise HTTPException(

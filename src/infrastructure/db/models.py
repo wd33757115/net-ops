@@ -79,6 +79,42 @@ class Conversation(Base):
     )
 
 
+class UserSession(Base):
+    """用户登录会话（PostgreSQL，与 Django User.id 关联）。"""
+
+    __tablename__ = "netops_user_sessions"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(String(64), index=True, nullable=False)
+    username = Column(String(128), nullable=False)
+    role = Column(String(32), default="operator", comment="admin / operator / viewer")
+    thread_prefix = Column(String(64), nullable=True, comment="LangGraph 用户级 thread 前缀")
+    refresh_jti = Column(String(64), nullable=True, index=True)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(512), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    revoked_at = Column(DateTime, nullable=True)
+
+
+class AuditLogRecord(Base):
+    """操作审计日志（登录、Skill 执行、Supervisor 规划等）。"""
+
+    __tablename__ = "netops_audit_logs"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(String(64), index=True, nullable=True)
+    username = Column(String(128), nullable=True)
+    action = Column(String(64), index=True, comment="login / logout / chat / skill_execute / ...")
+    resource_type = Column(String(64), nullable=True)
+    resource_id = Column(String(128), nullable=True)
+    detail = Column(JSON, nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    status = Column(String(32), default="success")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class Message(Base):
     __tablename__ = "netops_messages"
 

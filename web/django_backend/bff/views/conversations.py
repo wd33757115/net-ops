@@ -6,7 +6,7 @@ from django.views.decorators.csrf import csrf_exempt
 from ..decorators import require_jwt
 from ..proxy_client import DEFAULT_TIMEOUT, proxy_to_fastapi
 from ..sync_async import sync_bff_view
-from ._helpers import forward_client_headers, parse_json_body
+from ._helpers import forward_client_headers, inject_user_into_body, parse_json_body
 
 logger = logging.getLogger("bff.views.conversations")
 
@@ -18,7 +18,10 @@ async def proxy_conversations(request: HttpRequest) -> JsonResponse:
     headers = forward_client_headers(request)
     if request.method == "GET":
         params = {}
-        if request.GET.get("user_id"):
+        user = getattr(request, "user", None)
+        if user and getattr(user, "is_authenticated", False):
+            params["user_id"] = str(user.id)
+        elif request.GET.get("user_id"):
             params["user_id"] = request.GET.get("user_id")
         if request.GET.get("limit"):
             params["limit"] = request.GET.get("limit")
@@ -32,7 +35,7 @@ async def proxy_conversations(request: HttpRequest) -> JsonResponse:
             extra_headers=headers,
         )
 
-    data = parse_json_body(request)
+    data = inject_user_into_body(request, parse_json_body(request))
     return await proxy_to_fastapi(
         method="POST",
         fastapi_path="/api/v1/conversations",
@@ -55,7 +58,7 @@ async def proxy_conversation_detail(request: HttpRequest, conversation_id: str) 
             extra_headers=headers,
         )
     if request.method == "PUT":
-        data = parse_json_body(request)
+        data = inject_user_into_body(request, parse_json_body(request))
         return await proxy_to_fastapi(
             method="PUT",
             fastapi_path=f"/api/v1/conversations/{conversation_id}",
@@ -76,7 +79,7 @@ async def proxy_conversation_detail(request: HttpRequest, conversation_id: str) 
 @require_jwt
 @sync_bff_view
 async def proxy_add_message(request: HttpRequest, conversation_id: str) -> JsonResponse:
-    data = parse_json_body(request)
+    data = inject_user_into_body(request, parse_json_body(request))
     return await proxy_to_fastapi(
         method="POST",
         fastapi_path=f"/api/v1/conversations/{conversation_id}/messages",

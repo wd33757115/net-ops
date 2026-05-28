@@ -155,6 +155,8 @@ $useV2 = if ($UseSupervisorV1) { "false" } else { "true" }
 $pids = @{}
 $py = Escape-SingleQuotedPath $venvPython
 
+$jwtSecret = if ($dotEnv.ContainsKey("JWT_SECRET_KEY")) { $dotEnv["JWT_SECRET_KEY"] } elseif ($dotEnv.ContainsKey("SECRET_KEY")) { $dotEnv["SECRET_KEY"] } else { "" }
+
 $fastapiEnv = @{
     DEBUG = "true"
     ENFORCE_BFF_ORIGIN = "false"
@@ -167,6 +169,8 @@ $fastapiEnv = @{
 foreach ($k in @("DEEPSEEK_API_KEY", "POSTGRES_PASSWORD", "POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PORT")) {
     if ($dotEnv.ContainsKey($k)) { $fastapiEnv[$k] = $dotEnv[$k] }
 }
+if ($jwtSecret) { $fastapiEnv["JWT_SECRET_KEY"] = $jwtSecret }
+if ($dotEnv.ContainsKey("BFF_REQUIRE_AUTH")) { $fastapiEnv["BFF_REQUIRE_AUTH"] = $dotEnv["BFF_REQUIRE_AUTH"] }
 
 Write-ColorOutput "[Step 4/7] Start Celery Worker (solo, Windows) ..." "Yellow"
 $celeryLog = Join-Path $logDir "celery.log"
@@ -178,6 +182,7 @@ $celeryEnv = @{
 foreach ($k in @("DEEPSEEK_API_KEY", "POSTGRES_PASSWORD", "POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PORT", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND")) {
     if ($dotEnv.ContainsKey($k)) { $celeryEnv[$k] = $dotEnv[$k] }
 }
+if ($jwtSecret) { $celeryEnv["JWT_SECRET_KEY"] = $jwtSecret }
 $celeryCmd = '& ''' + $py + ''' -m celery -A src.core.celery_tasks.celery_app worker --loglevel=info -P solo'
 New-LauncherScript -Path $celeryLauncher -WorkingDirectory $ProjectRoot -EnvVars $celeryEnv -CommandLine $celeryCmd -LogFile $celeryLog -PreCommands @(
     'Remove-Item Env:DJANGO_SETTINGS_MODULE -ErrorAction SilentlyContinue'

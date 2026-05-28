@@ -1,0 +1,24 @@
+import React from 'react'
+import { Navigate } from 'react-router-dom'
+import { Spin } from 'antd'
+import { useAuth } from '../context/AuthContext'
+
+const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '40vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" tip="加载中..." />
+      </div>
+    )
+  }
+
+  if (user?.role !== 'admin') {
+    return <Navigate to="/chat" replace />
+  }
+
+  return <>{children}</>
+}
+
+export default AdminRoute

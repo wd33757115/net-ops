@@ -4,8 +4,11 @@ import uuid
 
 import websockets
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.conf import settings
 
 from .proxy_client import build_fastapi_ws_url
+from .roles import get_user_role, user_thread_prefix
+from .ws_auth import authenticate_websocket_scope
 
 logger = logging.getLogger("bff.consumers")
 
@@ -16,9 +19,21 @@ class ChatProxyConsumer(AsyncWebsocketConsumer):
     upstream = None
     upstream_task = None
     request_id = None
+    ws_user = None
 
     async def connect(self):
         self.request_id = str(uuid.uuid4())
+
+        auth_required = getattr(settings, "BFF_REQUIRE_AUTH", not settings.DEBUG)
+        if auth_required:
+            user, claims, error = await asyncio.to_thread(authenticate_websocket_scope, self.scope)
+            if error or not user:
+                logger.warning("ws_auth_failed request_id=%s error=%s", self.request_id, error)
+                await self.close(code=4401)
+                return
+            self.ws_user = user
+            self.ws_claims = claims
+
         query_string = self.scope.get("query_string", b"")
         upstream_url = build_fastapi_ws_url("/ws/v1/chat", query_string)
         upstream_headers = {
@@ -26,6 +41,14 @@ class ChatProxyConsumer(AsyncWebsocketConsumer):
             "X-Forwarded-From": "django-bff",
             "X-Internal-Request": "true",
         }
+        if self.ws_user:
+            upstream_headers["X-User-Id"] = str(self.ws_user.id)
+            upstream_headers["X-User-Name"] = self.ws_user.username
+            upstream_headers["X-User-Role"] = get_user_role(self.ws_user)
+            upstream_headers["X-User-Thread-Prefix"] = user_thread_prefix(self.ws_user)
+            session_id = getattr(self, "ws_claims", {}).get("session_id")
+            if session_id:
+                upstream_headers["X-Session-Id"] = str(session_id)
 
         try:
             self.upstream = await websockets.connect(
@@ -48,9 +71,10 @@ class ChatProxyConsumer(AsyncWebsocketConsumer):
         await self.accept()
         self.upstream_task = asyncio.create_task(self._forward_upstream())
         logger.info(
-            "ws_proxy_connected request_id=%s upstream=%s",
+            "ws_proxy_connected request_id=%s upstream=%s user=%s",
             self.request_id,
             upstream_url,
+            getattr(self.ws_user, "username", "anonymous"),
         )
 
     async def disconnect(self, close_code):

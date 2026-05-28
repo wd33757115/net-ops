@@ -3,7 +3,7 @@ import logging
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from ..decorators import require_jwt
+from ..decorators import require_jwt, require_role
 from ..sync_async import sync_bff_view
 from ..proxy_client import proxy_to_fastapi
 from ..views._helpers import forward_client_headers, parse_json_body
@@ -47,6 +47,7 @@ async def proxy_skills_stats(request: HttpRequest) -> JsonResponse:
 
 @csrf_exempt
 @require_jwt
+@require_role("admin")
 @sync_bff_view
 async def proxy_reload_all_skills(request: HttpRequest) -> JsonResponse:
     return await proxy_to_fastapi(
@@ -119,6 +120,7 @@ async def proxy_skill_toggle(request: HttpRequest, skill_name: str) -> JsonRespo
 
 @csrf_exempt
 @require_jwt
+@require_role("admin")
 @sync_bff_view
 async def proxy_skill_reload(request: HttpRequest, skill_name: str) -> JsonResponse:
     return await proxy_to_fastapi(

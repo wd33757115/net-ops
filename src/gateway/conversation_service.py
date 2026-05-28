@@ -46,14 +46,16 @@ class ConversationService:
                 "updated_at": conversation.updated_at
             }
 
-    def get_conversation(self, conversation_id: str) -> Optional[dict]:
-        """获取单个对话"""
+    def get_conversation(self, conversation_id: str, user_id: Optional[str] = None) -> Optional[dict]:
+        """获取单个对话；若提供 user_id 则校验归属。"""
         with get_db_session() as session:
             conversation = session.query(Conversation).filter(
                 Conversation.id == conversation_id,
                 Conversation.is_deleted == False
             ).first()
             if not conversation:
+                return None
+            if user_id and conversation.user_id and conversation.user_id != user_id:
                 return None
             return {
                 "id": conversation.id,
@@ -65,6 +67,26 @@ class ConversationService:
                 "created_at": conversation.created_at,
                 "updated_at": conversation.updated_at
             }
+
+    def get_conversation_for_user(
+        self,
+        conversation_id: str,
+        user_id: str,
+        *,
+        allow_legacy_unowned: bool = True,
+    ) -> Optional[dict]:
+        """获取对话并强制用户隔离（未绑定 user 的历史会话仅首次访问时认领）。"""
+        conv = self.get_conversation(conversation_id)
+        if not conv:
+            return None
+        owner = conv.get("user_id")
+        if owner and owner != user_id:
+            return None
+        if not owner and allow_legacy_unowned:
+            return self.update_conversation(conversation_id, user_id=user_id)
+        if not owner:
+            return None
+        return conv
 
     def get_conversations(self, user_id: Optional[str] = None, limit: int = 20, 
                          offset: int = 0) -> List[dict]:

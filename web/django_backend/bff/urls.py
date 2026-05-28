@@ -1,11 +1,21 @@
 from django.urls import path
 
-from . import auth
+from . import auth, user_admin
 from .views import chat, conversations, health, itsm, knowledge, rag, skills, system, tasks, upload
 
 urlpatterns = [
     path("auth/login/", auth.bff_login, name="bff_login"),
     path("auth/refresh/", auth.bff_refresh, name="bff_refresh"),
+    path("auth/logout/", auth.bff_logout, name="bff_logout"),
+    path("auth/me/", auth.bff_me, name="bff_me"),
+    path("auth/change-password/", auth.bff_change_password, name="bff_change_password"),
+    path("auth/users/", user_admin.bff_users_list_or_create, name="bff_users"),
+    path("auth/users/<int:user_id>/", user_admin.bff_user_detail, name="bff_user_detail"),
+    path(
+        "auth/users/<int:user_id>/reset-password/",
+        user_admin.bff_user_reset_password,
+        name="bff_user_reset_password",
+    ),
     path("chat/", chat.proxy_chat, name="bff_chat"),
     path("chat/upload/", upload.proxy_chat_upload, name="bff_chat_upload"),
     path("health/", health.proxy_health, name="bff_health"),

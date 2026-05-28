@@ -13,6 +13,13 @@ from .response import bff_error
 logger = logging.getLogger("bff.middleware")
 
 
+def get_client_ip(request: HttpRequest) -> str:
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "unknown")
+
+
 def _resolve_response(response):
     if asyncio.iscoroutine(response):
         async def _await_coro():
@@ -20,13 +27,6 @@ def _resolve_response(response):
 
         return async_to_sync(_await_coro)()
     return response
-
-
-def _get_client_ip(request: HttpRequest) -> str:
-    xff = request.META.get("HTTP_X_FORWARDED_FOR")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR", "unknown")
 
 
 def _attach_request_meta(request: HttpRequest) -> str:
@@ -47,7 +47,7 @@ def _log_request(request: HttpRequest, response, request_id: str) -> None:
             "path": request.path,
             "status": response.status_code,
             "duration_ms": round(duration_ms, 2),
-            "client_ip": _get_client_ip(request),
+            "client_ip": get_client_ip(request),
         },
     )
 
@@ -75,7 +75,7 @@ class BFFRequestIDMiddleware:
 
 
 class BFFRateLimitMiddleware:
-    """基于 IP 的简易限流中间件"""
+    """限流：优先 Redis 滑动窗口，不可用时进程内计数。"""
 
     sync_capable = True
     async_capable = True
@@ -83,9 +83,34 @@ class BFFRateLimitMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
         self._window: dict[str, list[float]] = defaultdict(list)
-        self._limit_chat = 30
-        self._limit_default = 60
-        self._window_seconds = 60
+        self._limit_chat = getattr(settings, "BFF_RATE_LIMIT_CHAT", 30)
+        self._limit_default = getattr(settings, "BFF_RATE_LIMIT_DEFAULT", 60)
+        self._window_seconds = getattr(settings, "BFF_RATE_LIMIT_WINDOW", 60)
+
+    def _redis_rate_limit(self, ip: str, path: str) -> tuple[bool, int]:
+        try:
+            import sys
+            from pathlib import Path
+
+            root = Path(__file__).resolve().parents[3]
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from src.auth.token_store import get_redis
+
+            client = get_redis()
+            if not client:
+                return False, 0
+            limit = self._limit_chat if "/chat/" in path else self._limit_default
+            bucket = int(time.time()) // self._window_seconds
+            key = f"ratelimit:bff:{ip}:{bucket}:{ 'chat' if '/chat/' in path else 'default'}"
+            count = client.incr(key)
+            if count == 1:
+                client.expire(key, self._window_seconds + 1)
+            if count > limit:
+                return True, client.ttl(key) or self._window_seconds
+            return False, 0
+        except Exception:
+            return False, 0
 
     def _clean_window(self, ip: str) -> None:
         now = time.monotonic()
@@ -98,9 +123,16 @@ class BFFRateLimitMiddleware:
         return len(self._window[ip]) >= limit
 
     def _check_rate_limit(self, request: HttpRequest):
-        if settings.DEBUG:
+        if settings.DEBUG and not getattr(settings, "BFF_RATE_LIMIT_IN_DEBUG", False):
             return None
-        ip = _get_client_ip(request)
+        ip = get_client_ip(request)
+        limited, retry_after = self._redis_rate_limit(ip, request.path)
+        if limited:
+            return bff_error(
+                "Rate limit exceeded. Please try again later.",
+                429,
+                data={"retry_after_seconds": retry_after or self._window_seconds},
+            )
         if self._is_rate_limited(ip, request.path):
             return bff_error(
                 "Rate limit exceeded. Please try again later.",

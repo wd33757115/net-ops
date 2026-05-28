@@ -90,6 +90,8 @@ class SupervisorStateV2(TypedDict):
     intermediate_results: Annotated[dict[str, Any] | None, _merge_dicts]
     loaded_skills: list[str] | None
     current_skill_task: SkillTaskSpec | None
+    user_id: str | None
+    user_role: str | None
 
 
 def _get_query(state: SupervisorStateV2) -> str:
@@ -705,10 +707,20 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
     print(f"               Parameters: {decision.parameters}", flush=True)
 
     try:
-        from src.skill_system.security import get_security_manager
+        from src.auth.rbac import role_to_permission_level
+        from src.skill_system.security import PermissionLevel, get_security_manager
 
-        if not get_security_manager().check_permission(skill_name, "USER"):
-            print(f"[Supervisor v2] WARN: 权限不足 ({skill_name})，继续执行")
+        role = (state.get("user_role") or "operator").lower()
+        perm_name = role_to_permission_level(role)
+        user_level = PermissionLevel(perm_name) if perm_name in PermissionLevel._value2member_map_ else PermissionLevel.USER
+        if not get_security_manager().check_permission(skill_name, user_level):
+            msg = f"角色 {role} 无权执行 Skill: {skill_name}"
+            print(f"[Supervisor v2] 拒绝执行: {msg}")
+            return {
+                "intermediate_results": {
+                    skill_name: {"success": False, "message": msg, "error": msg},
+                },
+            }
     except Exception:
         pass
 

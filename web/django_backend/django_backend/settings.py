@@ -1,5 +1,6 @@
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -8,6 +9,11 @@ load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 允许 BFF 引用仓库 src/*（token_store、security 等）
+PROJECT_ROOT = BASE_DIR.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key-change-in-production')
@@ -33,6 +39,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'channels',
     'chat',
+    'bff',
 ]
 
 MIDDLEWARE = [
@@ -178,6 +185,8 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': False,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    'SIGNING_KEY': os.getenv('JWT_SECRET_KEY', SECRET_KEY),
+    'ALGORITHM': 'HS256',
 }
 
 
@@ -186,6 +195,12 @@ FASTAPI_BASE_URL = os.getenv('FASTAPI_BASE_URL', 'http://localhost:8000')
 
 # BFF 鉴权：生产默认开启；开发环境 DEBUG=True 时默认关闭（可设 BFF_REQUIRE_AUTH=true 强制开启）
 BFF_REQUIRE_AUTH = os.getenv('BFF_REQUIRE_AUTH', '').lower() in ('true', '1', 'yes') if os.getenv('BFF_REQUIRE_AUTH') else (not DEBUG)
+
+# BFF 限流（Redis 优先；DEBUG 下默认关闭，设 BFF_RATE_LIMIT_IN_DEBUG=true 启用）
+BFF_RATE_LIMIT_CHAT = int(os.getenv('BFF_RATE_LIMIT_CHAT', '30'))
+BFF_RATE_LIMIT_DEFAULT = int(os.getenv('BFF_RATE_LIMIT_DEFAULT', '60'))
+BFF_RATE_LIMIT_WINDOW = int(os.getenv('BFF_RATE_LIMIT_WINDOW', '60'))
+BFF_RATE_LIMIT_IN_DEBUG = os.getenv('BFF_RATE_LIMIT_IN_DEBUG', '').lower() in ('true', '1', 'yes')
 
 
 # Channels（WebSocket 代理）
