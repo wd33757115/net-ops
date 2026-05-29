@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Button, Drawer } from 'antd'
 import { MenuOutlined } from '@ant-design/icons'
 import ChatShellSidebar from '../chat/ChatShellSidebar'
+import NotificationBell from '../NotificationBell'
 import { useIsMobile } from '../../hooks/useIsMobile'
 
 interface GrokShellLayoutProps {
@@ -51,6 +52,11 @@ const GrokShellLayout: React.FC<GrokShellLayoutProps> = ({
       </Drawer>
 
       <main className={`grok-main${mode === 'chat' ? ' grok-main-chat' : ''}`}>
+        {mode === 'chat' && (
+          <div className="grok-chat-topbar">
+            <NotificationBell />
+          </div>
+        )}
         {isMobile && (
           <div className="grok-mobile-bar">
             <Button

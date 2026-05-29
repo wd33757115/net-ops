@@ -782,6 +782,8 @@ class SkillRegistry:
         "firewall-policy-generator": "execute_firewall_policy_task",
         "device-backup": "execute_config_backup_task",
         "device-patrol": "execute_device_patrol_task",
+        "itsm-change-ticket-writer": "execute_itsm_change_ticket_task",
+        "itsm-callback": "execute_itsm_callback_task",
     }
 
     @classmethod

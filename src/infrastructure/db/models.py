@@ -148,6 +148,64 @@ class Team(Base):
     is_deleted = Column(Boolean, default=False)
 
 
+class WorkflowRun(Base):
+    """多步 Workflow 运行实例（ITSM 变更闭环等）。"""
+
+    __tablename__ = "netops_workflow_runs"
+
+    id = Column(String(64), primary_key=True, index=True)
+    template_name = Column(String(64), index=True, nullable=False)
+    ticket_id = Column(String(128), index=True, nullable=True)
+    source = Column(String(32), default="chat", comment="chat / itsm_webhook")
+    user_id = Column(String(64), index=True, nullable=True)
+    thread_id = Column(String(64), index=True, nullable=True)
+    status = Column(String(32), default="pending", index=True)
+    context = Column(JSON, nullable=True)
+    current_step_index = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime, nullable=True)
+
+
+class WorkflowStepRecord(Base):
+    """Workflow 单步执行记录。"""
+
+    __tablename__ = "netops_workflow_steps"
+
+    id = Column(String(64), primary_key=True, index=True)
+    run_id = Column(String(64), index=True, nullable=False)
+    step_index = Column(Integer, default=0)
+    step_name = Column(String(64), nullable=False)
+    skill_name = Column(String(128), nullable=False)
+    celery_task_id = Column(String(64), index=True, nullable=True)
+    status = Column(String(32), default="pending", index=True)
+    input_artifacts = Column(JSON, nullable=True)
+    output_artifacts = Column(JSON, nullable=True)
+    result = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Notification(Base):
+    """站内通知。"""
+
+    __tablename__ = "netops_notifications"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(String(64), index=True, nullable=False)
+    title = Column(String(256), nullable=False)
+    body = Column(Text, nullable=True)
+    level = Column(String(32), default="info")
+    payload = Column(JSON, nullable=True)
+    workflow_run_id = Column(String(64), index=True, nullable=True)
+    thread_id = Column(String(64), index=True, nullable=True)
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class TeamMember(Base):
     """团队成员与团队内角色。"""
 

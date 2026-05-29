@@ -33,6 +33,7 @@ NODE_LABELS: dict[str, str] = {
     "supervisor": "Supervisor 规划",
     "orchestrator": "编排调度",
     "skill_executor_v2": "Skill 执行",
+    "workflow_starter": "ITSM 变更流程启动",
     "final_aggregator": "结果聚合",
     "knowledge_qa": "知识库问答",
 }
@@ -206,12 +207,15 @@ async def stream_supervisor_chat(
         references=references,
     ).model_dump()
 
+    workflow_run_id = final_result.get("workflow_run_id")
+
     if _should_emit("final_answer", user):
         yield _sse(
             "final_answer",
             {
                 **payload,
                 "trace_id": trace_id,
+                "workflow_run_id": workflow_run_id,
                 "langfuse_url": get_trace_url(trace_id) if user and user.is_admin() else None,
             },
         )

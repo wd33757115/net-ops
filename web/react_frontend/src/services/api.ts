@@ -522,6 +522,34 @@ export const storageApi = {
   },
 }
 
+export interface AppNotification {
+  id: string
+  title: string
+  body?: string
+  level?: string
+  payload?: Record<string, unknown>
+  workflow_run_id?: string
+  thread_id?: string
+  read_at?: string | null
+  created_at?: string
+}
+
+export interface NotificationListResult {
+  unread_count: number
+  items: AppNotification[]
+}
+
+export const notificationApi = {
+  list: async (): Promise<NotificationListResult> => {
+    const response = await api.get('/notifications/')
+    return response.data
+  },
+  markRead: async (id: string) => {
+    const response = await api.post(`/notifications/${id}/read/`)
+    return response.data
+  },
+}
+
 export const wsApi = {
   connectChat: (threadId?: string): WebSocket => {
     return new WebSocket(getChatWebSocketUrl(threadId))

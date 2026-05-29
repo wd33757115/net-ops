@@ -14,7 +14,7 @@ celery = Celery(
     "netops_worker",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["src.core.celery_tasks.tasks"]
+    include=["src.core.celery_tasks.tasks", "src.core.workflows.tasks"]
 )
 
 celery.conf.update(

@@ -37,7 +37,7 @@ from src.skills.skill_base import SkillDecision, SkillResult
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-AgentType = Literal["supervisor", "skill_executor", "knowledge_qa", "end"]
+AgentType = Literal["supervisor", "skill_executor", "knowledge_qa", "workflow_starter", "end"]
 PRE_PROCESS_TOP_K = 5
 # 语义路由低于此阈值不加载 Skill（避免知识问句误匹配 device-backup 等）
 SEMANTIC_SKILL_MIN_CONFIDENCE = float(os.getenv("SEMANTIC_SKILL_MIN_CONFIDENCE", "0.72"))
@@ -92,6 +92,8 @@ class SupervisorStateV2(TypedDict):
     current_skill_task: SkillTaskSpec | None
     user_id: str | None
     user_role: str | None
+    workflow_type: str | None
+    workflow_run_id: str | None
 
 
 def _get_query(state: SupervisorStateV2) -> str:
@@ -242,6 +244,24 @@ def _extract_device_filter_params(query: str) -> dict[str, Any]:
     if group_match:
         params["group"] = group_match.group(1)
     return params
+
+
+def _is_itsm_firewall_workflow(query: str, source: str | None) -> bool:
+    """是否应启动 ITSM 防火墙变更 Workflow（策略 → 变更工单 → 回调）。"""
+    if source == "itsm_webhook":
+        return True
+    if not re.search(r"防火墙|策略", query, re.IGNORECASE):
+        return False
+    workflow_hints = [
+        r"变更工单",
+        r"编写变更",
+        r"itsm",
+        r"提交变更",
+        r"回调",
+        r"变更流程",
+        r"开通.*变更",
+    ]
+    return any(re.search(p, query, re.IGNORECASE) for p in workflow_hints)
 
 
 def _build_heuristic_skill_params(
@@ -531,6 +551,17 @@ def supervisor_node_v2(state: SupervisorStateV2) -> SupervisorStateV2:
 
     print(f"\n[Supervisor v2] supervisor_node | 已加载 Skill: {loaded_skills}")
 
+    if _is_itsm_firewall_workflow(query, state.get("source")):
+        print("   识别 ITSM 防火墙变更 Workflow → workflow_starter")
+        increment_counter("supervisor_v2_plan_total", tags={"result": "workflow"})
+        observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
+        return {
+            **state,
+            "workflow_type": "itsm-firewall-change",
+            "next_agent": "workflow_starter",
+            "fallback_to_rag": False,
+        }
+
     if not loaded_skills:
         plan = ExecutionPlan(
             reasoning="无匹配 Skill，走 RAG 兜底",
@@ -775,6 +806,39 @@ def route_after_executor_v2(state: SupervisorStateV2) -> str:
     return "final_aggregator"
 
 
+def workflow_starter_node(state: SupervisorStateV2) -> SupervisorStateV2:
+    """启动 ITSM 防火墙变更 Workflow，立即返回 run_id（长时任务在 Celery 执行）。"""
+    from src.core.workflows import ITSM_FIREWALL_CHANGE, WorkflowEngine
+    from src.gateway.itsm_workflow import build_chat_workflow_context
+
+    context = build_chat_workflow_context(state)
+    run_id = WorkflowEngine.start(
+        ITSM_FIREWALL_CHANGE.name,
+        context,
+        source=state.get("source") or "chat",
+        user_id=state.get("user_id"),
+        thread_id=state.get("thread_id"),
+    )
+    ticket = context.get("ticket_id") or "—"
+    content = (
+        f"[OK] 已启动 ITSM 防火墙变更流程\n\n"
+        f"- **流程 ID**: `{run_id}`\n"
+        f"- **工单**: {ticket}\n"
+        f"- **步骤**: 生成防火墙策略 → 编写变更工单 Excel → 回调 ITSM\n\n"
+        f"流程在后台执行，可通过 `GET /api/v1/workflows/{run_id}` 查询进度；"
+        f"完成后将收到站内通知。"
+    )
+    print(f"[Supervisor v2] workflow_starter | run_id={run_id}")
+    return {
+        **state,
+        "workflow_run_id": run_id,
+        "messages": state["messages"] + [AIMessage(content=content)],
+        "context": f"Workflow 已启动: {run_id}",
+        "next_agent": "end",
+        "agent_type": "workflow_starter",
+    }
+
+
 def final_aggregator_node(state: SupervisorStateV2) -> SupervisorStateV2:
     """Map-Reduce 聚合：合并所有 Skill 执行结果为用户可见回复。"""
     results = state.get("intermediate_results") or {}
@@ -842,6 +906,8 @@ def knowledge_qa_node_wrapper_v2(state: SupervisorStateV2) -> SupervisorStateV2:
 
 
 def route_after_supervisor_v2(state: SupervisorStateV2) -> str:
+    if state.get("workflow_type") == "itsm-firewall-change":
+        return "workflow_starter"
     plan = state.get("execution_plan")
     if not plan or plan.fallback_to_rag or not plan.skills:
         return "knowledge_qa"
@@ -856,6 +922,7 @@ def build_supervisor_graph_v2(checkpointer=None):
     workflow.add_node("supervisor", supervisor_node_v2)
     workflow.add_node("orchestrator", lambda state: state)  # 占位，实际路由在 conditional_edges
     workflow.add_node("skill_executor_v2", skill_executor_v2_node)
+    workflow.add_node("workflow_starter", workflow_starter_node)
     workflow.add_node("final_aggregator", final_aggregator_node)
     workflow.add_node("knowledge_qa", knowledge_qa_node_wrapper_v2)
 
@@ -864,7 +931,7 @@ def build_supervisor_graph_v2(checkpointer=None):
     workflow.add_conditional_edges(
         "supervisor",
         route_after_supervisor_v2,
-        {"orchestrator": "orchestrator", "knowledge_qa": "knowledge_qa"},
+        {"orchestrator": "orchestrator", "knowledge_qa": "knowledge_qa", "workflow_starter": "workflow_starter"},
     )
     workflow.add_conditional_edges("orchestrator", orchestrator_dispatch)
     workflow.add_conditional_edges(
@@ -876,6 +943,7 @@ def build_supervisor_graph_v2(checkpointer=None):
             "knowledge_qa": "knowledge_qa",
         },
     )
+    workflow.add_edge("workflow_starter", END)
     workflow.add_edge("final_aggregator", END)
     workflow.add_edge("knowledge_qa", END)
 

@@ -46,9 +46,12 @@ outputs:
 - name: config_files
   type: download
   description: 多厂商防火墙配置文件压缩包
-- name: policy_report
-  type: text
-  description: 策略生成报告
+- name: config_file_key
+  type: string
+  description: MinIO 对象键（供下游 Skill 使用）
+- name: manifest
+  type: object
+  description: 设备/脚本/回退结构化摘要（manifest.json）
 references:
 - type: rag
   source: firewall-policy-guide

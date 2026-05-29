@@ -68,6 +68,8 @@ from src.gateway.conversation_service import get_conversation_service
 from src.gateway.skills_api import router as skills_router
 from src.gateway.knowledge_api import router as knowledge_router
 from src.gateway.storage_api import router as storage_router
+from src.gateway.workflow_api import router as workflow_router
+from src.gateway.notification_api import router as notification_router
 from src.gateway.schemas import (
     AddMessageRequest,
     ChatFileUploadRequest,
@@ -79,6 +81,7 @@ from src.gateway.schemas import (
     HealthResponse,
     ITSMEventRequest,
     ITSMFirewallPolicyRequest,
+    ITSMWorkflowStartResponse,
     MessageResponse,
     RAGSearchRequest,
     RAGSearchResponse,
@@ -224,6 +227,8 @@ app = FastAPI(
 app.include_router(skills_router)
 app.include_router(knowledge_router)
 app.include_router(storage_router)
+app.include_router(workflow_router)
+app.include_router(notification_router)
 
 # =============================================================================
 # CORS 中间件（生产环境请限制 origins）
@@ -656,59 +661,40 @@ async def itsm_webhook_endpoint(event: ITSMEventRequest, background_tasks: Backg
     )
 
 
-@app.post("/api/v1/itsm/webhook/firewall-policy", tags=["ITSM"])
+@app.post("/api/v1/itsm/webhook/firewall-policy", tags=["ITSM"], response_model=ITSMWorkflowStartResponse)
 async def itsm_firewall_policy_webhook(request: ITSMFirewallPolicyRequest):
     """
-    ITSM Webhook - 防火墙策略开通请求
-
-    - 接收 ITSM 服务目录发起的防火墙策略开通请求
-    - 异步执行策略生成任务（Celery）
-    - 回调 ITSM 更新工单状态
+    ITSM Webhook - 防火墙策略开通（完整 Workflow：策略 ZIP → 变更工单 Excel → ITSM 回调）
     """
+    from src.core.workflows import ITSM_FIREWALL_CHANGE, WorkflowEngine
+    from src.gateway.itsm_workflow import build_itsm_workflow_context
+
     try:
-        from src.core.celery_tasks.tasks import execute_firewall_policy_task
-    except Exception as e:
-        response = {
-            "task_id": str(uuid.uuid4()),
-            "ticket_id": request.ticket_id,
-            "ticket_title": request.ticket_title,
-            "status": "pending",
-            "message": "任务已接收，但 Celery 导入失败。",
-            "query_endpoint": f"/api/v1/tasks/{request.ticket_id}",
-            "required_action": str(e)
-        }
+        context = build_itsm_workflow_context(request)
+        run_id = WorkflowEngine.start(
+            ITSM_FIREWALL_CHANGE.name,
+            context,
+            source="itsm_webhook",
+        )
+        body = ITSMWorkflowStartResponse(
+            workflow_run_id=run_id,
+            ticket_id=request.ticket_id,
+            status="accepted",
+            message="ITSM 防火墙变更流程已启动（策略生成 → 变更工单 → 回调）",
+            query_endpoint=f"/api/v1/workflows/{run_id}",
+        )
+        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=body.model_dump())
+    except Exception as exc:
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
-            content=response
+            content={
+                "workflow_run_id": str(uuid.uuid4()),
+                "ticket_id": request.ticket_id,
+                "status": "failed",
+                "message": f"Workflow 启动失败: {exc}",
+                "query_endpoint": "",
+            },
         )
-
-    celery_task = execute_firewall_policy_task.delay(
-        ticket_id=request.ticket_id,
-        ticket_title=request.ticket_title,
-        policy_file_url=request.policy_file.url,
-        topology_file_url=request.topology_file.url if request.topology_file else None,
-        parameters=request.parameters.dict() if request.parameters else None,
-        callback_url=request.callback_url,
-        callback_headers=request.callback_headers,
-        requester=request.requester,
-        assignee=request.assignee,
-        priority=request.priority
-    )
-
-    response = {
-        "task_id": str(uuid.uuid4()),
-        "celery_task_id": celery_task.task_id,
-        "ticket_id": request.ticket_id,
-        "ticket_title": request.ticket_title,
-        "status": "accepted",
-        "message": "防火墙策略生成任务已提交，正在后台处理...",
-        "query_endpoint": f"/api/v1/tasks/{celery_task.task_id}"
-    }
-
-    return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED,
-        content=response
-    )
 
 
 @app.get("/api/v1/tasks/{task_id}", tags=["Tasks"], response_model=TaskResponse)

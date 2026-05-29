@@ -466,6 +466,7 @@ body {
 
 .grok-main-chat {
   background: #fff;
+  position: relative;
 }
 
 .grok-mobile-bar {
@@ -1755,6 +1756,53 @@ body {
   margin: 0 0 8px;
   font-size: 14px;
   font-weight: 600;
+}
+
+.grok-chat-topbar {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 20;
+}
+
+.grok-notification-bell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: #fafafa;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.grok-notification-bell:hover {
+  background: #f0f0f0;
+  color: #374151;
+}
+
+.grok-notification-loading {
+  display: flex;
+  justify-content: center;
+  padding: 32px;
+}
+
+.grok-notification-item {
+  cursor: pointer;
+  border-radius: 8px;
+  padding-inline: 8px !important;
+}
+
+.grok-notification-item.is-unread {
+  background: #f8fafc;
+}
+
+.grok-notification-body {
+  margin-bottom: 4px !important;
+  white-space: pre-wrap;
 }
 
 /* ── 账户管理 ── */

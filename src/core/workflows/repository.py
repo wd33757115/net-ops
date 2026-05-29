@@ -1,0 +1,191 @@
+"""Workflow 持久化。"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from src.infrastructure.db.models import Notification, WorkflowRun, WorkflowStepRecord
+from src.infrastructure.db.postgres import get_db_session
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+def create_workflow_run(
+    *,
+    template_name: str,
+    context: dict[str, Any],
+    ticket_id: str | None = None,
+    source: str = "chat",
+    user_id: str | None = None,
+    thread_id: str | None = None,
+) -> str:
+    run_id = str(uuid.uuid4())
+    with get_db_session() as db:
+        run = WorkflowRun(
+            id=run_id,
+            template_name=template_name,
+            ticket_id=ticket_id,
+            source=source,
+            user_id=user_id,
+            thread_id=thread_id,
+            status="pending",
+            context=context,
+            current_step_index=0,
+        )
+        db.add(run)
+        db.flush()
+    return run_id
+
+
+def create_workflow_steps(run_id: str, steps: list[dict[str, Any]]) -> list[WorkflowStepRecord]:
+    records: list[WorkflowStepRecord] = []
+    with get_db_session() as db:
+        for idx, step in enumerate(steps):
+            rec = WorkflowStepRecord(
+                id=str(uuid.uuid4()),
+                run_id=run_id,
+                step_index=idx,
+                step_name=step["name"],
+                skill_name=step["skill_name"],
+                status="pending",
+            )
+            db.add(rec)
+            records.append(rec)
+        db.flush()
+    return records
+
+
+def get_workflow_run(run_id: str) -> WorkflowRun | None:
+    with get_db_session() as db:
+        run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+        if run:
+            db.expunge(run)
+        return run
+
+
+def list_workflow_steps(run_id: str) -> list[WorkflowStepRecord]:
+    with get_db_session() as db:
+        steps = (
+            db.query(WorkflowStepRecord)
+            .filter(WorkflowStepRecord.run_id == run_id)
+            .order_by(WorkflowStepRecord.step_index)
+            .all()
+        )
+        for s in steps:
+            db.expunge(s)
+        return steps
+
+
+def update_run_status(run_id: str, status: str, *, error: str | None = None) -> None:
+    with get_db_session() as db:
+        run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+        if not run:
+            return
+        run.status = status
+        run.updated_at = _now()
+        if error:
+            run.error_message = error
+        if status in ("completed", "failed"):
+            run.completed_at = _now()
+
+
+def update_run_step_index(run_id: str, step_index: int) -> None:
+    with get_db_session() as db:
+        run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+        if run:
+            run.current_step_index = step_index
+            run.status = "running"
+            run.updated_at = _now()
+
+
+def mark_step_running(step_id: str, celery_task_id: str) -> None:
+    with get_db_session() as db:
+        step = db.query(WorkflowStepRecord).filter(WorkflowStepRecord.id == step_id).first()
+        if step:
+            step.status = "running"
+            step.celery_task_id = celery_task_id
+            step.started_at = _now()
+
+
+def mark_step_completed(step_id: str, result: dict[str, Any]) -> None:
+    with get_db_session() as db:
+        step = db.query(WorkflowStepRecord).filter(WorkflowStepRecord.id == step_id).first()
+        if step:
+            step.status = "completed" if result.get("success") else "failed"
+            step.result = result
+            step.output_artifacts = result.get("artifacts")
+            step.error_message = result.get("error")
+            step.completed_at = _now()
+
+
+def mark_step_failed(step_id: str, error: str) -> None:
+    with get_db_session() as db:
+        step = db.query(WorkflowStepRecord).filter(WorkflowStepRecord.id == step_id).first()
+        if step:
+            step.status = "failed"
+            step.error_message = error
+            step.completed_at = _now()
+
+
+def create_notification(
+    *,
+    user_id: str,
+    title: str,
+    body: str = "",
+    payload: dict[str, Any] | None = None,
+    workflow_run_id: str | None = None,
+    thread_id: str | None = None,
+    level: str = "info",
+) -> str:
+    nid = str(uuid.uuid4())
+    with get_db_session() as db:
+        db.add(
+            Notification(
+                id=nid,
+                user_id=str(user_id),
+                title=title,
+                body=body,
+                level=level,
+                payload=payload,
+                workflow_run_id=workflow_run_id,
+                thread_id=thread_id,
+            )
+        )
+    return nid
+
+
+def list_notifications(user_id: str, *, unread_only: bool = False, limit: int = 50) -> list[Notification]:
+    with get_db_session() as db:
+        q = db.query(Notification).filter(Notification.user_id == str(user_id))
+        if unread_only:
+            q = q.filter(Notification.read_at.is_(None))
+        items = q.order_by(Notification.created_at.desc()).limit(limit).all()
+        for n in items:
+            db.expunge(n)
+        return items
+
+
+def mark_notification_read(notification_id: str, user_id: str) -> bool:
+    with get_db_session() as db:
+        n = (
+            db.query(Notification)
+            .filter(Notification.id == notification_id, Notification.user_id == str(user_id))
+            .first()
+        )
+        if not n:
+            return False
+        n.read_at = _now()
+        return True
+
+
+def count_unread_notifications(user_id: str) -> int:
+    with get_db_session() as db:
+        return (
+            db.query(Notification)
+            .filter(Notification.user_id == str(user_id), Notification.read_at.is_(None))
+            .count()
+        )

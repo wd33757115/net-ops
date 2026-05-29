@@ -249,6 +249,55 @@ class SkillFileUploadRequest(BaseModel):
     file_content: str = Field(..., description="Base64 编码的文件内容")
 
 
+class WorkflowStepResponse(BaseModel):
+    step_index: int
+    step_name: str
+    skill_name: str
+    status: str
+    celery_task_id: str | None = None
+    output_artifacts: dict[str, Any] | None = None
+    error_message: str | None = None
+
+
+class WorkflowRunResponse(BaseModel):
+    run_id: str
+    template_name: str
+    ticket_id: str | None = None
+    source: str | None = None
+    status: str
+    current_step_index: int = 0
+    error_message: str | None = None
+    context: dict[str, Any] | None = None
+    steps: list[WorkflowStepResponse] = Field(default_factory=list)
+    created_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class NotificationResponse(BaseModel):
+    id: str
+    title: str
+    body: str | None = None
+    level: str = "info"
+    payload: dict[str, Any] | None = None
+    workflow_run_id: str | None = None
+    thread_id: str | None = None
+    read_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class NotificationListResponse(BaseModel):
+    unread_count: int = 0
+    items: list[NotificationResponse] = Field(default_factory=list)
+
+
+class ITSMWorkflowStartResponse(BaseModel):
+    workflow_run_id: str
+    ticket_id: str
+    status: str = "accepted"
+    message: str
+    query_endpoint: str
+
+
 class KnowledgeUploadRequest(BaseModel):
     filename: str = Field(..., description="文件名")
     file_content: str = Field(..., description="Base64 编码的文件内容")

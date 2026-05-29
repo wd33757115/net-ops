@@ -1,5 +1,7 @@
+import re
 
 from dotenv import load_dotenv
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
@@ -36,9 +38,26 @@ class Settings(BaseSettings):
     MINIO_SECURE: bool = False
     MINIO_BUCKET_NAME: str = "netops-files"
 
-    # 网盘配额（可在 .env 覆盖）
+    # 网盘配额（可在 .env 覆盖；支持纯数字或如 500*1024*1024 的表达式）
     STORAGE_MAX_FILE_BYTES: int = 500 * 1024 * 1024  # 单文件 500MB
     STORAGE_MAX_USER_BYTES: int = 20 * 1024 * 1024 * 1024  # 个人空间 20GB
+
+    @field_validator("STORAGE_MAX_FILE_BYTES", "STORAGE_MAX_USER_BYTES", mode="before")
+    @classmethod
+    def parse_storage_byte_limit(cls, value):
+        if value is None or isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return value
+            try:
+                return int(text)
+            except ValueError:
+                pass
+            if re.fullmatch(r"[\d\s*+\-/()]+", text):
+                return int(eval(text, {"__builtins__": {}}, {}))
+        return value
 
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333

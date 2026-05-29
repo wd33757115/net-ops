@@ -1,7 +1,7 @@
 from django.urls import path
 
 from . import auth, user_admin
-from .views import chat, conversations, health, itsm, knowledge, rag, skills, storage, system, tasks, upload
+from .views import chat, conversations, health, itsm, knowledge, notifications, rag, skills, storage, system, tasks, upload, workflows
 
 urlpatterns = [
     path("auth/login/", auth.bff_login, name="bff_login"),
@@ -23,6 +23,13 @@ urlpatterns = [
     path("health/diagnostics/", health.proxy_health_diagnostics, name="bff_health_diagnostics"),
     path("gateway/", system.proxy_gateway_info, name="bff_gateway_info"),
     path("tasks/<str:task_id>/", tasks.proxy_task_status, name="bff_task_status"),
+    path("workflows/<str:run_id>/", workflows.proxy_workflow_detail, name="bff_workflow_detail"),
+    path("notifications/", notifications.proxy_notifications_list, name="bff_notifications"),
+    path(
+        "notifications/<str:notification_id>/read/",
+        notifications.proxy_notification_read,
+        name="bff_notification_read",
+    ),
     path("conversations/", conversations.proxy_conversations, name="bff_conversations"),
     path(
         "conversations/<str:conversation_id>/",

@@ -198,7 +198,15 @@ class FileBasedSkill(BaseSkill):
             return SkillResult(success=False, message=str(exc), error="celery_timeout")
 
         if isinstance(task_result, dict):
-            return SkillResult(**task_result)
+            success = task_result.get("success", task_result.get("status") == "success")
+            return SkillResult(
+                success=bool(success),
+                message=task_result.get("message", ""),
+                data=task_result,
+                download_url=task_result.get("download_url"),
+                error=task_result.get("error"),
+                execution_time_ms=int(task_result.get("execution_time_ms") or 0),
+            )
         return SkillResult(success=True, message=str(task_result), data={"raw_result": task_result})
 
     async def _execute_with_llm(self, instructions: str, params: dict) -> SkillResult:

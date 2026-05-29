@@ -18,80 +18,64 @@ from src.infrastructure.storage.minio_client import get_minio_storage
 settings = get_settings()
 
 
-@celery.task(bind=True, max_retries=0)   # max_retries=0: 失败不重试，快速失败让用户看到错误
+@celery.task(bind=True, max_retries=0)
 def execute_firewall_policy_task(
     self,
     ticket_id: str,
-    ticket_title: str,
-    policy_file_url: str,
+    ticket_title: str = "防火墙策略生成",
+    policy_file_url: str | None = None,
     topology_file_url: str | None = None,
     parameters: dict | None = None,
-    callback_url: str | None = None,
-    callback_headers: dict | None = None,
     requester: str = "",
     assignee: str = "",
-    **kwargs
+    change_background: str = "",
+    change_purpose: str = "",
+    requester_dept: str = "",
+    priority: str = "P2",
+    due_date: str | None = None,
+    workflow_run_id: str | None = None,
+    **kwargs,
 ):
-    """执行防火墙策略生成任务（失败不重试，快速失败）"""
+    """执行防火墙策略生成（产物含 manifest + file_key；ITSM 回调由 Workflow 第 3 步负责）。"""
     import requests
+
+    from src.core.firewall_policy.manifest import build_manifest_from_output, write_manifest_file
+    from src.core.workflows.artifacts import make_file_artifact
 
     task_id = self.request.id
     execution_start = datetime.now()
-
-    print(f"[DEBUG] celery task - received ticket_id: {ticket_id}")
-    print(f"[DEBUG] celery task - task_id: {task_id}")
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = os.path.join(tmpdir, "output")
             os.makedirs(output_dir, exist_ok=True)
 
-            policy_filename = f"policy_{ticket_id}.xlsx"
+            policy_filename = f"policy_{ticket_id or 'draft'}.xlsx"
             policy_path = os.path.join(tmpdir, policy_filename)
 
-            # 处理策略文件：支持 URL、file:// 路径、本地路径
-            # 如果未提供 policy_file_url，使用默认测试文件
             if not policy_file_url:
                 from src.core.firewall_policy.paths import DEFAULT_POLICY_FILE
 
                 default_policy = str(DEFAULT_POLICY_FILE)
                 if os.path.exists(default_policy):
-                    import shutil
                     shutil.copy(default_policy, policy_path)
-                    print(f"[DEBUG] 使用默认策略文件: {default_policy}")
                 else:
-                    raise Exception(
-                        "未提供策略文件(policy_file_url)，且默认测试文件不存在。"
-                        "请上传策略Excel文件后重试。"
-                    )
-            elif policy_file_url.startswith(('http://', 'https://')):
+                    raise Exception("未提供策略文件且默认测试文件不存在")
+            elif policy_file_url.startswith(("http://", "https://")):
                 response = requests.get(policy_file_url, timeout=60)
                 response.raise_for_status()
                 with open(policy_path, "wb") as f:
                     f.write(response.content)
-                print(f"[DEBUG] 已从URL下载策略文件: {policy_file_url}")
-            elif policy_file_url.startswith('file://'):
-                import shutil
+            elif policy_file_url.startswith("file://"):
                 actual_path = policy_file_url[7:]
                 if os.path.exists(actual_path):
                     shutil.copy(actual_path, policy_path)
-                    print(f"[DEBUG] 已复制file://策略文件: {actual_path}")
                 else:
                     raise Exception(f"策略文件不存在: {actual_path}")
             elif os.path.exists(policy_file_url):
-                import shutil
                 shutil.copy(policy_file_url, policy_path)
-                print(f"[DEBUG] 已复制本地策略文件: {policy_file_url}")
             else:
                 raise Exception(f"策略文件不存在: {policy_file_url}")
-
-            topology_path = topology_file_url
-            if not topology_path:
-                from src.core.firewall_policy.paths import DEFAULT_TOPOLOGY_FILE
-
-                topology_path = str(DEFAULT_TOPOLOGY_FILE)
-
-            import subprocess
 
             from src.core.firewall_policy.paths import (
                 DEFAULT_TOPOLOGY_FILE,
@@ -99,25 +83,29 @@ def execute_firewall_policy_task(
                 get_firewall_policy_script,
             )
 
-            script_path = get_firewall_policy_script()
-            if not topology_path or not os.path.exists(topology_path):
+            topology_path = topology_file_url or str(DEFAULT_TOPOLOGY_FILE)
+            if not os.path.exists(topology_path):
                 topology_path = str(DEFAULT_TOPOLOGY_FILE)
 
-            effective_ticket_id = (ticket_id or "").strip()
-            if not effective_ticket_id:
-                effective_ticket_id = f"POLICY_{str(task_id)[:8]}"
+            effective_ticket_id = (ticket_id or "").strip() or f"POLICY_{str(task_id)[:8]}"
 
+            import subprocess
+
+            script_path = get_firewall_policy_script()
             cmd = [
                 sys.executable,
                 str(script_path),
-                "-t", topology_path,
-                "-p", policy_path,
-                "-o", output_dir,
-                "-u", requester or "system",
-                "--ticket-id", effective_ticket_id,
+                "-t",
+                topology_path,
+                "-p",
+                policy_path,
+                "-o",
+                output_dir,
+                "-u",
+                requester or "system",
+                "--ticket-id",
+                effective_ticket_id,
             ]
-            print(f"[DEBUG] firewall policy cmd: {' '.join(cmd)}")
-
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -125,117 +113,207 @@ def execute_firewall_policy_task(
                 timeout=300,
                 cwd=str(get_firewall_policy_cwd()),
             )
-
             if result.returncode != 0:
                 raise Exception(f"策略生成失败: {result.stderr}")
 
-            output_files = []
-            for root, dirs, files in os.walk(output_dir):
-                for f in files:
-                    output_files.append(os.path.join(root, f))
+            manifest = build_manifest_from_output(
+                output_dir,
+                ticket_id=effective_ticket_id,
+                ticket_title=ticket_title,
+                change_background=change_background or ticket_title,
+                change_purpose=change_purpose or "开通防火墙策略",
+                requester=requester,
+                requester_dept=requester_dept,
+                priority=priority,
+                due_date=due_date,
+                topology_path=topology_path,
+                trace_id=workflow_run_id,
+            )
+            write_manifest_file(output_dir, manifest)
 
+            zip_name = f"firewall_policies_{effective_ticket_id}.zip"
+            zip_path = os.path.join(tmpdir, zip_name)
+            shutil.make_archive(zip_path.replace(".zip", ""), "zip", output_dir)
+
+            object_name = None
+            download_url = None
             minio_client = get_minio_storage()
-            print(f"[DEBUG] MinIO client: {minio_client}")
-            print(f"[DEBUG] MinIO client ready: {minio_client.is_ready() if minio_client else 'No client'}")
-
             if minio_client and minio_client.is_ready():
-                print("[DEBUG] MinIO is ready, uploading file...")
-                zip_path = os.path.join(tmpdir, f"firewall_policies_{ticket_id}.zip")
-                shutil.make_archive(zip_path.replace(".zip", ""), "zip", output_dir)
-
-                object_name = f"firewall_policies/{ticket_id}/{os.path.basename(zip_path)}"
-                print(f"[DEBUG] Uploading to MinIO: {object_name}")
+                object_name = f"firewall_policies/{effective_ticket_id}/{zip_name}"
                 with open(zip_path, "rb") as f:
-                    upload_success = minio_client.upload_file(object_name, f)
-                print(f"[DEBUG] Upload success: {upload_success}")
-
+                    upload_success = minio_client.upload_file(
+                        object_name, f, content_type="application/zip"
+                    )
                 if upload_success:
-                    download_url = minio_client.get_presigned_url(object_name, expires=3600*24*7)
-                    print(f"[DEBUG] Download URL: {download_url}")
-                else:
-                    download_url = None
-            else:
-                print("[DEBUG] MinIO not ready, setting download_url to None")
-                download_url = None
-                output_files = [f for f in output_files if os.path.isfile(f)]
+                    download_url = minio_client.get_presigned_url(object_name, expires=3600 * 24 * 7)
 
             execution_time_ms = int((datetime.now() - execution_start).total_seconds() * 1000)
-
-            if callback_url:
-                callback_data = {
-                    "version": "1.0",
-                    "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S+08:00"),
-                    "callback_id": f"cb_{uuid.uuid4().hex}",
-                    "source_ticket_id": ticket_id,
-                    "status": "success",
-                    "result": {
-                        "action": "update_ticket",
-                        "ticket_update": {
-                            "status": "配置已生成",
-                            "resolution_note": "策略配置文件已生成，下载后请按照变更流程执行",
-                            "attachments": []
-                        }
-                    },
-                    "metadata": {
-                        "execution_time_ms": execution_time_ms,
-                        "task_id": task_id
-                    }
-                }
-
-                if download_url:
-                    callback_data["result"]["ticket_update"]["attachments"].append({
-                        "filename": f"firewall_policies_{ticket_id}.zip",
-                        "download_url": download_url
-                    })
-
-                headers = callback_headers or {}
-                headers["Content-Type"] = "application/json"
-
-                try:
-                    requests.post(callback_url, json=callback_data, headers=headers, timeout=30)
-                except Exception as e:
-                    self.retry(exc=e, max_retries=self.max_retries)
-
+            config_zip = make_file_artifact(
+                file_key=object_name,
+                download_url=download_url,
+                filename=zip_name,
+                content_type="application/zip",
+            )
             return {
+                "success": True,
                 "status": "success",
-                "action": "firewall",
-                "ticket_id": ticket_id,
+                "message": "防火墙策略生成成功",
+                "ticket_id": effective_ticket_id,
                 "download_url": download_url,
-                "output_files": output_files,
-                "execution_time_ms": execution_time_ms
+                "config_file_key": object_name,
+                "filename": zip_name,
+                "manifest": manifest,
+                "artifacts": {
+                    "config_zip": config_zip,
+                    "manifest": manifest,
+                },
+                "execution_time_ms": execution_time_ms,
             }
 
     except Exception as e:
-        execution_time_ms = int((datetime.now() - execution_start).total_seconds() * 1000)
-
-        if callback_url:
-            callback_data = {
-                "version": "1.0",
-                "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S+08:00"),
-                "callback_id": f"cb_{uuid.uuid4().hex}",
-                "source_ticket_id": ticket_id,
-                "status": "failed",
-                "error": {
-                    "code": "POLICY_GEN_001",
-                    "message": str(e),
-                    "suggested_action": "请检查策略文件格式和网络连接"
-                },
-                "metadata": {
-                    "execution_time_ms": execution_time_ms,
-                    "retry_count": self.request.retries,
-                    "failed_at_stage": "policy_generation"
-                }
-            }
-
-            headers = callback_headers or {}
-            headers["Content-Type"] = "application/json"
-            try:
-                requests.post(callback_url, json=callback_data, headers=headers, timeout=30)
-            except requests.exceptions.RequestException:
-                pass
-
-        # max_retries=0 时直接抛出异常，不重试
         raise e
+
+
+@celery.task(bind=True, max_retries=1)
+def execute_itsm_change_ticket_task(
+    self,
+    ticket_id: str,
+    ticket_title: str = "",
+    change_background: str = "",
+    change_purpose: str = "",
+    requester: str = "",
+    requester_dept: str = "",
+    priority: str = "P2",
+    due_date: str | None = None,
+    config_file_key: str | None = None,
+    config_files_url: str | None = None,
+    manifest: dict | None = None,
+    workflow_run_id: str | None = None,
+    **kwargs,
+):
+    """根据防火墙策略产物生成变更工单 Excel。"""
+    from datetime import datetime
+
+    from src.core.itsm.change_ticket_excel import build_change_ticket_workbook
+    from src.core.itsm.zip_manifest_parser import load_manifest
+    from src.core.workflows.artifacts import make_file_artifact
+
+    execution_start = datetime.now()
+    try:
+        m = load_manifest(manifest=manifest, file_key=config_file_key, zip_url=config_files_url)
+        m.setdefault("ticket_id", ticket_id)
+        m.setdefault("ticket_title", ticket_title)
+        if change_background:
+            m["change_background"] = change_background
+        if change_purpose:
+            m["change_purpose"] = change_purpose
+
+        excel_bytes = build_change_ticket_workbook(
+            m,
+            config_zip_url=config_files_url,
+            workflow_run_id=workflow_run_id,
+        )
+        excel_name = f"变更工单_{ticket_id}_{execution_start.strftime('%Y%m%d%H%M%S')}.xlsx"
+        object_name = None
+        download_url = None
+        minio = get_minio_storage()
+        if minio and minio.is_ready():
+            object_name = f"change_tickets/{ticket_id}/{excel_name}"
+            if minio.upload_file(
+                object_name,
+                excel_bytes,
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ):
+                download_url = minio.get_presigned_url(object_name, expires=3600 * 24 * 7)
+
+        execution_time_ms = int((datetime.now() - execution_start).total_seconds() * 1000)
+        change_excel = make_file_artifact(
+            file_key=object_name,
+            download_url=download_url,
+            filename=excel_name,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        return {
+            "success": True,
+            "message": "变更工单 Excel 已生成",
+            "change_excel_url": download_url,
+            "change_excel_file_key": object_name,
+            "change_excel_filename": excel_name,
+            "download_url": download_url,
+            "artifacts": {"change_excel": change_excel},
+            "execution_time_ms": execution_time_ms,
+        }
+    except Exception as exc:
+        return {"success": False, "message": str(exc), "error": str(exc)}
+
+
+@celery.task(bind=True, max_retries=3, retry_backoff=5)
+def execute_itsm_callback_task(
+    self,
+    ticket_id: str,
+    callback_url: str | None = None,
+    callback_headers: dict | None = None,
+    change_excel_url: str | None = None,
+    change_excel_file_key: str | None = None,
+    config_files_url: str | None = None,
+    config_file_key: str | None = None,
+    workflow_run_id: str | None = None,
+    **kwargs,
+):
+    """回调 ITSM，附带 ZIP 与变更工单 Excel。"""
+    from datetime import datetime
+
+    from src.core.itsm.callback_client import build_callback_payload, post_itsm_callback
+    from src.core.workflows.artifacts import make_file_artifact
+
+    execution_start = datetime.now()
+    if not callback_url:
+        return {
+            "success": True,
+            "message": "未配置 callback_url，跳过 ITSM 回调",
+            "callback_status": "skipped",
+        }
+
+    minio = get_minio_storage()
+    zip_url = config_files_url
+    if not zip_url and config_file_key and minio and minio.is_ready():
+        zip_url = minio.get_presigned_url(config_file_key, expires=3600 * 24 * 7)
+    excel_url = change_excel_url
+    if not excel_url and change_excel_file_key and minio and minio.is_ready():
+        excel_url = minio.get_presigned_url(change_excel_file_key, expires=3600 * 24 * 7)
+
+    config_zip = make_file_artifact(
+        file_key=config_file_key,
+        download_url=zip_url,
+        filename=f"firewall_policies_{ticket_id}.zip",
+    )
+    change_excel = make_file_artifact(
+        file_key=change_excel_file_key,
+        download_url=excel_url,
+        filename=f"变更工单_{ticket_id}.xlsx",
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    execution_time_ms = int((datetime.now() - execution_start).total_seconds() * 1000)
+    payload = build_callback_payload(
+        ticket_id=ticket_id,
+        status="success",
+        config_zip=config_zip,
+        change_excel=change_excel,
+        execution_time_ms=execution_time_ms,
+        workflow_run_id=workflow_run_id,
+    )
+    ok, status_code, body = post_itsm_callback(callback_url, payload, callback_headers)
+    return {
+        "success": ok,
+        "message": "ITSM 回调成功" if ok else f"ITSM 回调失败: HTTP {status_code}",
+        "callback_status": "success" if ok else "failed",
+        "http_status": status_code,
+        "response_body": body,
+        "artifacts": {"config_zip": config_zip, "change_excel": change_excel},
+        "execution_time_ms": execution_time_ms,
+        "error": None if ok else body,
+    }
 
 
 @celery.task(bind=True, max_retries=3, retry_backoff=2)
