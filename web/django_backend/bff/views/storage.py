@@ -267,6 +267,20 @@ async def proxy_storage_file_detail(request: HttpRequest, file_id: str) -> JsonR
 @csrf_exempt
 @require_jwt
 @sync_bff_view
+async def proxy_storage_file_copy(request: HttpRequest, file_id: str) -> JsonResponse:
+    data = parse_json_body(request)
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/storage/files/{file_id}/copy",
+        request_id=request.bff_request_id,
+        data=data,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
 async def proxy_storage_file_move(request: HttpRequest, file_id: str) -> JsonResponse:
     data = parse_json_body(request)
     return await proxy_to_fastapi(

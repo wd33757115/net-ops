@@ -2,8 +2,22 @@ import React from 'react'
 
 type ChipTone = 'default' | 'ok' | 'warn'
 
-export function GrokChip({ children, tone = 'default' }: { children: React.ReactNode; tone?: ChipTone }) {
-  return <span className={`grok-chip${tone !== 'default' ? ` is-${tone}` : ''}`}>{children}</span>
+export function GrokChip({
+  children,
+  tone = 'default',
+  className = '',
+}: {
+  children: React.ReactNode
+  tone?: ChipTone
+  className?: string
+}) {
+  return (
+    <span
+      className={`grok-chip${tone !== 'default' ? ` is-${tone}` : ''}${className ? ` ${className}` : ''}`}
+    >
+      {children}
+    </span>
+  )
 }
 
 interface GrokToolBtnProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {

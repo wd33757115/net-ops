@@ -1,12 +1,10 @@
-import React, { useMemo } from 'react'
+import React from 'react'
 import { Button, Menu, Tag } from 'antd'
 import {
   MessageOutlined,
   AppstoreOutlined,
-  DashboardOutlined,
   BookOutlined,
   LogoutOutlined,
-  TeamOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
@@ -15,14 +13,7 @@ export const navMenuItems = [
   { key: '/chat', icon: React.createElement(MessageOutlined), label: 'Chat' },
   { key: '/skills', icon: React.createElement(AppstoreOutlined), label: 'Skills' },
   { key: '/knowledge', icon: React.createElement(BookOutlined), label: '知识库' },
-  { key: '/status', icon: React.createElement(DashboardOutlined), label: 'Status' },
 ]
-
-const adminMenuItem = {
-  key: '/users',
-  icon: React.createElement(TeamOutlined),
-  label: '账户管理',
-}
 
 interface NavMenuProps {
   onNavigate?: () => void
@@ -32,12 +23,7 @@ const NavMenu: React.FC<NavMenuProps> = ({ onNavigate }) => {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout } = useAuth()
-  const menuItems = useMemo(() => {
-    if (user?.role === 'admin') {
-      return [...navMenuItems.slice(0, 1), adminMenuItem, ...navMenuItems.slice(1)]
-    }
-    return navMenuItems
-  }, [user?.role])
+  const menuItems = navMenuItems
   const selectedKey =
     menuItems.find((item) => location.pathname.startsWith(item.key))?.key || '/chat'
 

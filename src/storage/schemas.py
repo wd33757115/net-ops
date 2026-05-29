@@ -117,6 +117,11 @@ class MoveRequest(BaseModel):
     target_folder_id: str
 
 
+class CopyFileRequest(BaseModel):
+    target_folder_id: str
+    name: str | None = Field(default=None, max_length=512, description="可选新文件名，默认自动生成副本名")
+
+
 class TeamMemberResponse(BaseModel):
     id: str
     user_id: str

@@ -12,7 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from .audit import log_auth_event
 from .decorators import require_jwt, require_role
 from .response import bff_error, bff_success
-from .roles import ALL_ROLES, ROLE_ADMIN, assign_user_role, count_active_admins, get_user_role
+from .roles import ALL_ROLES, ROLE_ADMIN, ROLE_OPERATOR, assign_user_role, count_active_admins, get_user_role
 
 
 def _serialize_user(user) -> dict:
@@ -40,6 +40,17 @@ def _would_remove_last_admin(user, *, new_role: str | None = None, deactivate: b
     if deactivate or (new_role and new_role.lower() != ROLE_ADMIN):
         return count_active_admins(exclude_user_id=user.id) == 0
     return False
+
+
+def _can_delete_user(actor, target) -> str | None:
+    """返回不可删除的原因；None 表示允许删除。"""
+    if target.id == actor.id:
+        return "不能删除当前登录账号"
+    if target.username.lower() == "admin":
+        return "系统保留账号 admin 不可删除"
+    if get_user_role(target) == ROLE_ADMIN and count_active_admins(exclude_user_id=target.id) == 0:
+        return "不能删除最后一个 admin 账号"
+    return None
 
 
 @csrf_exempt
@@ -100,6 +111,27 @@ def bff_user_detail(request, user_id: int):
         except User.DoesNotExist:
             return bff_error("user not found", 404)
         return bff_success(_serialize_user(user))
+
+    if request.method == "DELETE":
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return bff_error("user not found", 404)
+
+        reason = _can_delete_user(request.user, user)
+        if reason:
+            return bff_error(reason, 400)
+
+        username = user.username
+        user_id_deleted = user.id
+        user.delete()
+        log_auth_event(
+            "user_delete",
+            request.user,
+            request,
+            detail={"target_user_id": user_id_deleted, "target_username": username},
+        )
+        return bff_success({"message": "user deleted successfully"})
 
     if request.method != "PATCH":
         return bff_error("Method not allowed", 405)

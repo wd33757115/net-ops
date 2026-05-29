@@ -5,9 +5,12 @@ BASE_DIR = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 import io
+import logging
 from typing import BinaryIO, Optional
 
 from src.common.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 try:
     from minio import Minio
@@ -44,11 +47,11 @@ class MinIOStorage:
 
             if not self._client.bucket_exists(self._bucket_name):
                 self._client.make_bucket(self._bucket_name)
-                print(f"✅ MinIO: 创建 Bucket '{self._bucket_name}'")
+                logger.info("MinIO: 创建 Bucket '%s'", self._bucket_name)
 
-            print("✅ MinIO 存储客户端初始化成功")
+            logger.info("MinIO 存储客户端初始化成功")
         except Exception as e:
-            print(f"⚠️ MinIO 初始化失败(可稍后启动): {e}")
+            logger.warning("MinIO 初始化失败(可稍后启动): %s", e)
             self._client = None
 
     def is_ready(self) -> bool:
@@ -81,7 +84,7 @@ class MinIOStorage:
             )
             return True
         except S3Error as e:
-            print(f"❌ MinIO 上传失败: {e}")
+            logger.warning("MinIO 上传失败: %s", e)
             return False
 
     def get_presigned_url(self, object_name: str, expires: int = 3600 * 24) -> str | None:
@@ -97,7 +100,7 @@ class MinIOStorage:
             )
             return str(url)
         except S3Error as e:
-            print(f"❌ MinIO 生成预签名URL失败: {e}")
+            logger.warning("MinIO 生成预签名URL失败: %s", e)
             return None
 
     def download_file(self, object_name: str) -> bytes | None:
@@ -126,7 +129,7 @@ class MinIOStorage:
             )
             return str(url)
         except S3Error as e:
-            print(f"❌ MinIO 生成上传预签名URL失败: {e}")
+            logger.warning("MinIO 生成上传预签名URL失败: %s", e)
             return None
 
     def delete_object(self, object_name: str) -> bool:
@@ -136,7 +139,7 @@ class MinIOStorage:
             self._client.remove_object(self._bucket_name, object_name)
             return True
         except S3Error as e:
-            print(f"❌ MinIO 删除对象失败: {e}")
+            logger.warning("MinIO 删除对象失败: %s", e)
             return False
 
     def list_object_keys(self, prefix: str, *, recursive: bool = True) -> list[str]:
@@ -150,7 +153,7 @@ class MinIOStorage:
             )
             return [obj.object_name for obj in objects if obj.object_name]
         except S3Error as e:
-            print(f"❌ MinIO 列举对象失败: {e}")
+            logger.warning("MinIO 列举对象失败: %s", e)
             return []
 
     def delete_objects_by_prefix(self, prefix: str) -> int:
@@ -186,7 +189,7 @@ class MinIOStorage:
             )
             return True
         except S3Error as e:
-            print(f"❌ MinIO 复制对象失败: {e}")
+            logger.warning("MinIO 复制对象失败: %s -> %s: %s", source_key, dest_key, e)
             return False
 
     @property

@@ -6,7 +6,6 @@ import {
   AppstoreOutlined,
   BookOutlined,
   CloudOutlined,
-  DashboardOutlined,
   TeamOutlined,
   LogoutOutlined,
   SettingOutlined,
@@ -75,25 +74,16 @@ const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ onNavigate }) => {
     loading,
   } = useChatStore()
 
-  const navItems = useMemo(() => {
-    const items = [
+  const navItems = useMemo(
+    () => [
       { key: 'search', icon: <SearchOutlined />, label: '搜索', action: 'search' as const },
       { key: 'new-chat', icon: <EditOutlined />, label: '新建聊天', action: 'new-chat' as const },
       { key: '/skills', icon: <AppstoreOutlined />, label: 'Skills', action: 'route' as const },
       { key: '/knowledge', icon: <BookOutlined />, label: '知识库', action: 'route' as const },
       { key: '/storage', icon: <CloudOutlined />, label: '网盘', action: 'route' as const },
-      { key: '/status', icon: <DashboardOutlined />, label: 'Status', action: 'route' as const },
-    ]
-    if (user?.role === 'admin') {
-      items.push({
-        key: '/users',
-        icon: <TeamOutlined />,
-        label: '账户管理',
-        action: 'route' as const,
-      })
-    }
-    return items
-  }, [user?.role])
+    ],
+    []
+  )
 
   const filteredConversations = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()

@@ -267,6 +267,10 @@ export const userAdminApi = {
     const response = await api.post(`/auth/users/${id}/reset-password/`, { new_password })
     return response.data as { message: string }
   },
+  delete: async (id: number) => {
+    const response = await api.delete(`/auth/users/${id}/`)
+    return response.data as { message: string }
+  },
 }
 
 export const skillApi = {
@@ -499,6 +503,13 @@ export const storageApi = {
   },
   moveFile: async (fileId: string, targetFolderId: string) => {
     const response = await api.post(`/storage/files/${fileId}/move/`, { target_folder_id: targetFolderId })
+    return response.data
+  },
+  copyFile: async (fileId: string, targetFolderId: string, name?: string) => {
+    const response = await api.post(`/storage/files/${fileId}/copy/`, {
+      target_folder_id: targetFolderId,
+      name,
+    })
     return response.data
   },
   share: async (data: { file_id: string; team_id: string; target_folder_id?: string }) => {

@@ -165,7 +165,7 @@ api.interceptors.response.use(
       message.error(`服务器错误: ${serverMessage}`)
     }
 
-    return Promise.reject(error)
+    return Promise.reject(new Error(serverMessage))
   }
 )
 

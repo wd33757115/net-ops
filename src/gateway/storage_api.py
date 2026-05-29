@@ -14,9 +14,12 @@ from src.infrastructure.db.postgres import get_db_session
 from src.infrastructure.storage.minio_client import get_minio_storage
 from src.storage import file_service, folder_service
 from src.storage.schemas import (
+    CopyFileRequest,
+    FileResponse,
     FolderCreateRequest,
     FolderResponse,
     FolderTreeNode,
+    CopyFileRequest,
     MoveRequest,
     RenameRequest,
     ShareFileRequest,
@@ -301,6 +304,19 @@ async def move_file(
     with get_db_session() as session:
         file_row = file_service.move_file(session, user, file_id, body)
         _audit(request, user, "storage_file_move", "file", file_id, body.model_dump())
+        return file_row
+
+
+@router.post("/files/{file_id}/copy", response_model=FileResponse)
+async def copy_file(
+    request: Request,
+    file_id: str,
+    body: CopyFileRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    with get_db_session() as session:
+        file_row = file_service.copy_file(session, user, file_id, body)
+        _audit(request, user, "storage_file_copy", "file", file_id, body.model_dump())
         return file_row
 
 

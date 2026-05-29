@@ -86,6 +86,7 @@ urlpatterns = [
     path("storage/upload/complete/", storage.proxy_storage_upload_complete, name="bff_storage_upload_complete"),
     path("storage/files/<str:file_id>/content/", storage.proxy_storage_file_content, name="bff_storage_file_content"),
     path("storage/files/<str:file_id>/download/", storage.proxy_storage_file_download, name="bff_storage_file_download"),
+    path("storage/files/<str:file_id>/copy/", storage.proxy_storage_file_copy, name="bff_storage_file_copy"),
     path("storage/files/<str:file_id>/move/", storage.proxy_storage_file_move, name="bff_storage_file_move"),
     path("storage/files/<str:file_id>/", storage.proxy_storage_file_detail, name="bff_storage_file_detail"),
     path("storage/share/", storage.proxy_storage_share, name="bff_storage_share"),

@@ -273,6 +273,69 @@ def rename_file(session: Session, user: CurrentUser, file_id: str, req: RenameRe
     return _file_to_response(row)
 
 
+def _suggest_copy_name(session: Session, folder_id: str, source_name: str, source_folder_id: str | None) -> str:
+    """生成复制文件名：同目录或重名时追加「副本」后缀。"""
+    if folder_id != source_folder_id and not _duplicate_file_name(session, folder_id, source_name):
+        return source_name
+
+    base, dot, ext = source_name.rpartition(".")
+    if not dot:
+        base, ext = source_name, ""
+    ext_part = f".{ext}" if ext else ""
+    candidate = f"{base} - 副本{ext_part}"
+    n = 2
+    while _duplicate_file_name(session, folder_id, candidate):
+        candidate = f"{base} - 副本 ({n}){ext_part}"
+        n += 1
+    return candidate
+
+
+def copy_file(session: Session, user: CurrentUser, file_id: str, req: CopyFileRequest) -> FileResponse:
+    source = session.query(FileMetadata).filter(FileMetadata.id == file_id, FileMetadata.is_deleted.is_(False)).first()
+    if not source or source.status != "active":
+        raise HTTPException(status_code=404, detail="源文件不存在")
+    check_file_access(session, user, source, write=False)
+
+    target = fs.get_folder_or_404(session, req.target_folder_id)
+    check_folder_access(session, user, target, write=True)
+    if source.visibility != target.visibility:
+        raise HTTPException(status_code=400, detail="只能在相同空间内复制")
+    if source.visibility == "shared" and source.team_id != target.team_id:
+        raise HTTPException(status_code=400, detail="团队目录不一致")
+
+    name = (req.name or "").strip() or _suggest_copy_name(session, target.id, source.name, source.folder_id)
+    if _duplicate_file_name(session, target.id, name):
+        raise HTTPException(status_code=409, detail="目标目录下已存在同名文件")
+
+    dest_key = build_object_key(session, target, name)
+    storage = get_minio_storage()
+    source_key = resolve_object_key(session, source, repair=True)
+    if not storage.copy_object(source_key, dest_key):
+        raise HTTPException(status_code=500, detail="复制文件失败")
+
+    now = datetime.now(timezone.utc)
+    new_row = FileMetadata(
+        id=f"file-{uuid.uuid4().hex[:16]}",
+        name=name,
+        folder_id=target.id,
+        object_key=dest_key,
+        owner_id=source.owner_id if target.visibility == "private" else user.user_id,
+        team_id=target.team_id if target.visibility == "shared" else None,
+        visibility=target.visibility,
+        content_type=source.content_type,
+        size_bytes=source.size_bytes,
+        etag=source.etag,
+        status="active",
+        created_by=user.user_id,
+        created_at=now,
+        updated_at=now,
+        is_deleted=False,
+    )
+    session.add(new_row)
+    session.flush()
+    return _file_to_response(new_row)
+
+
 def move_file(session: Session, user: CurrentUser, file_id: str, req: MoveRequest) -> FileResponse:
     row = session.query(FileMetadata).filter(FileMetadata.id == file_id, FileMetadata.is_deleted.is_(False)).first()
     if not row or row.status != "active":

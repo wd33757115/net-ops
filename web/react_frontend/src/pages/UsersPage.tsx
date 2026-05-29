@@ -3,6 +3,7 @@ import {
   Form,
   Input,
   Modal,
+  Popconfirm,
   Select,
   Switch,
   Table,
@@ -12,7 +13,8 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useMutation, useQuery, useQueryClient } from 'react-query'
 import GrokShellLayout from '../components/layout/GrokShellLayout'
-import { GrokChip, GrokRowAction, GrokToolBtn } from '../components/ui/GrokUi'
+import { GrokChip, GrokInfoBar, GrokRowAction, GrokToolBtn } from '../components/ui/GrokUi'
+import { useAuth } from '../context/AuthContext'
 import { ManagedUser, userAdminApi } from '../services/api'
 
 const ROLE_OPTIONS = [
@@ -21,11 +23,50 @@ const ROLE_OPTIONS = [
   { value: 'viewer', label: 'viewer — 只读' },
 ]
 
+const ROLE_FILTER_OPTIONS = [
+  { value: 'admin', label: 'admin' },
+  { value: 'operator', label: 'operator' },
+  { value: 'viewer', label: 'viewer' },
+]
+
+const PASSWORD_HINT =
+  '至少 8 位，不能与用户名/邮箱过于相似，且不能使用常见密码（如 admin123、password）'
+
+const PASSWORD_RULES = [
+  { required: true, message: '请输入密码' },
+  { min: 8, message: '密码至少 8 位' },
+]
+
+function isSystemAdmin(user: ManagedUser): boolean {
+  return user.username.toLowerCase() === 'admin'
+}
+
+function deleteBlockedReason(
+  user: ManagedUser,
+  users: ManagedUser[],
+  currentUserId?: number
+): string | null {
+  if (isSystemAdmin(user)) return '系统内置账号不可删除'
+  if (currentUserId != null && user.id === currentUserId) return '不能删除当前登录账号'
+  if (user.role === 'admin' && user.is_active) {
+    const activeAdmins = users.filter((u) => u.role === 'admin' && u.is_active)
+    if (activeAdmins.length <= 1) return '至少保留一名启用的管理员'
+  }
+  return null
+}
+
+function canDeleteUser(user: ManagedUser, users: ManagedUser[], currentUserId?: number): boolean {
+  return deleteBlockedReason(user, users, currentUserId) == null
+}
+
 const UsersPage: React.FC = () => {
+  const { user: currentUser } = useAuth()
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
   const [editUser, setEditUser] = useState<ManagedUser | null>(null)
   const [resetUser, setResetUser] = useState<ManagedUser | null>(null)
+  const [search, setSearch] = useState('')
+  const [roleFilter, setRoleFilter] = useState<string | undefined>()
   const [createForm] = Form.useForm()
   const [editForm] = Form.useForm()
   const [resetForm] = Form.useForm()
@@ -37,6 +78,19 @@ const UsersPage: React.FC = () => {
   )
 
   const activeCount = users.filter((u) => u.is_active).length
+  const hasLastLogin = useMemo(() => users.some((u) => u.last_login), [users])
+
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return users.filter((user) => {
+      if (roleFilter && user.role !== roleFilter) return false
+      if (!q) return true
+      return (
+        user.username.toLowerCase().includes(q) ||
+        (user.email || '').toLowerCase().includes(q)
+      )
+    })
+  }, [users, search, roleFilter])
 
   const createMutation = useMutation(userAdminApi.create, {
     onSuccess: () => {
@@ -73,35 +127,83 @@ const UsersPage: React.FC = () => {
     }
   )
 
-  const columns: ColumnsType<ManagedUser> = useMemo(
-    () => [
-      { title: '用户名', dataIndex: 'username', key: 'username' },
-      { title: '邮箱', dataIndex: 'email', key: 'email', ellipsis: true },
+  const deleteMutation = useMutation((id: number) => userAdminApi.delete(id), {
+    onSuccess: () => {
+      message.success('用户已删除')
+      queryClient.invalidateQueries('managed-users')
+    },
+    onError: (err: Error) => message.error(err.message || '删除失败'),
+  })
+
+  const currentUserId = currentUser?.id
+
+  const columns: ColumnsType<ManagedUser> = useMemo(() => {
+    const base: ColumnsType<ManagedUser> = [
+      {
+        title: '用户名',
+        dataIndex: 'username',
+        key: 'username',
+        width: 168,
+        render: (username: string) => (
+          <span className="grok-user-name-cell">
+            <span className="grok-user-name">{username}</span>
+            {username.toLowerCase() === 'admin' ? (
+              <GrokChip className="is-system-badge">系统账号</GrokChip>
+            ) : null}
+          </span>
+        ),
+      },
+      {
+        title: '邮箱',
+        dataIndex: 'email',
+        key: 'email',
+        width: 180,
+        ellipsis: true,
+        render: (email: string) => email || <span className="grok-table-muted">未设置</span>,
+      },
       {
         title: '角色',
         dataIndex: 'role',
         key: 'role',
-        render: (role: string) => <GrokChip tone={role === 'admin' ? 'warn' : 'default'}>{role}</GrokChip>,
+        width: 108,
       },
       {
         title: '状态',
         dataIndex: 'is_active',
         key: 'is_active',
+        width: 88,
         render: (active: boolean) => (
           <GrokChip tone={active ? 'ok' : 'default'}>{active ? '启用' : '禁用'}</GrokChip>
         ),
       },
-      {
+    ]
+
+    if (hasLastLogin) {
+      base.push({
         title: '最后登录',
         dataIndex: 'last_login',
         key: 'last_login',
-        render: (value: string | null) => (value ? new Date(value).toLocaleString() : '—'),
-      },
-      {
-        title: '操作',
-        key: 'actions',
-        render: (_, record) => (
-          <span className="grok-row-actions">
+        width: 168,
+        render: (value: string | null) =>
+          value ? (
+            new Date(value).toLocaleString()
+          ) : (
+            <span className="grok-table-muted">从未登录</span>
+          ),
+      })
+    }
+
+    base.push({
+      title: '操作',
+      key: 'actions',
+      width: 220,
+      fixed: 'right',
+      render: (_, record) => {
+        const deletable = canDeleteUser(record, users, currentUserId)
+        const blockedReason = deleteBlockedReason(record, users, currentUserId)
+
+        return (
+          <span className="grok-row-actions grok-row-actions-nowrap">
             <GrokRowAction
               onClick={() => {
                 setEditUser(record)
@@ -115,15 +217,48 @@ const UsersPage: React.FC = () => {
               编辑
             </GrokRowAction>
             <GrokRowAction onClick={() => setResetUser(record)}>重置密码</GrokRowAction>
+            {deletable ? (
+              <Popconfirm
+                title={`确认删除用户「${record.username}」？`}
+                description="删除后无法恢复"
+                okText="删除"
+                okType="danger"
+                onConfirm={() => deleteMutation.mutate(record.id)}
+              >
+                <GrokRowAction danger disabled={deleteMutation.isLoading}>
+                  删除
+                </GrokRowAction>
+              </Popconfirm>
+            ) : (
+              <span className="grok-row-action-hint" title={blockedReason ?? undefined}>
+                不可删除
+              </span>
+            )}
           </span>
-        ),
+        )
       },
-    ],
-    [editForm]
-  )
+    })
+
+    return base
+  }, [editForm, users, currentUserId, deleteMutation.isLoading, hasLastLogin])
 
   const toolbar = (
     <>
+      <Input
+        className="grok-search-input"
+        placeholder="搜索用户名或邮箱…"
+        allowClear
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <Select
+        className="grok-users-role-filter"
+        allowClear
+        placeholder="全部角色"
+        value={roleFilter}
+        onChange={(value) => setRoleFilter(value)}
+        options={ROLE_FILTER_OPTIONS}
+      />
       <GrokToolBtn icon={<ReloadOutlined />} onClick={() => refetch()}>
         刷新
       </GrokToolBtn>
@@ -133,13 +268,18 @@ const UsersPage: React.FC = () => {
     </>
   )
 
+  const emptyText =
+    search.trim() || roleFilter
+      ? '没有匹配的用户，请调整搜索或筛选条件'
+      : '暂无用户，点击「新建用户」创建第一个账号'
+
   return (
     <GrokShellLayout
       title="账户管理"
       subtitle="创建用户、分配角色、启用/禁用账号与重置密码"
       toolbar={toolbar}
     >
-      <div className="grok-stat-grid">
+      <div className="grok-stat-grid grok-stat-grid-users">
         <div className="grok-stat-card">
           <div className="grok-stat-label">用户总数</div>
           <div className="grok-stat-value">{isLoading ? '—' : users.length}</div>
@@ -154,14 +294,25 @@ const UsersPage: React.FC = () => {
         </div>
       </div>
 
+      <GrokInfoBar>
+        <span>密码需满足复杂度要求；新建或重置密码时可在表单中查看详细策略</span>
+      </GrokInfoBar>
+
       <section className="grok-panel grok-panel-flush">
         <Table
-          className="grok-table"
+          className="grok-table grok-table-users"
           rowKey="id"
           loading={isLoading}
           columns={columns}
-          dataSource={users}
-          pagination={{ pageSize: 10, showSizeChanger: true }}
+          dataSource={filteredUsers}
+          scroll={{ x: hasLastLogin ? 920 : 760 }}
+          locale={{ emptyText }}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            hideOnSinglePage: true,
+            showTotal: (total) => `共 ${total} 人`,
+          }}
         />
       </section>
 
@@ -188,7 +339,12 @@ const UsersPage: React.FC = () => {
           <Form.Item name="email" label="邮箱">
             <Input type="email" autoComplete="email" />
           </Form.Item>
-          <Form.Item name="password" label="初始密码" rules={[{ required: true, message: '请输入密码' }]}>
+          <Form.Item
+            name="password"
+            label="初始密码"
+            rules={PASSWORD_RULES}
+            extra={PASSWORD_HINT}
+          >
             <Input.Password autoComplete="new-password" />
           </Form.Item>
           <Form.Item name="role" label="角色" rules={[{ required: true }]}>
@@ -250,7 +406,8 @@ const UsersPage: React.FC = () => {
           <Form.Item
             name="new_password"
             label="新密码"
-            rules={[{ required: true, message: '请输入新密码' }]}
+            rules={PASSWORD_RULES}
+            extra={PASSWORD_HINT}
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>

@@ -25,7 +25,13 @@ def _format_auth_error(detail) -> str:
 
 def _has_bearer_token(request) -> bool:
     auth_header = request.META.get("HTTP_AUTHORIZATION", "")
-    return auth_header.lower().startswith("bearer ")
+    if auth_header.lower().startswith("bearer "):
+        return True
+    token = request.GET.get("token") or request.GET.get("access_token")
+    if token:
+        request.META["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+        return True
+    return False
 
 
 def _authenticate_request(request, *, required: bool = True) -> tuple | None | JsonResponse:

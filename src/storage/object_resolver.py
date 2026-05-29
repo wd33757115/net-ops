@@ -166,12 +166,29 @@ def resolve_object_key(session: Session, row: FileMetadata, *, repair: bool = Tr
         except HTTPException:
             pass
 
-    prefix = _prefix_for_row(session, row, folder)
     basenames = _basename_candidates(row.name)
-    for key in storage.list_object_keys(prefix, recursive=True):
-        leaf = key.rsplit("/", 1)[-1]
-        if leaf in basenames:
-            _add(key)
+    search_prefixes: list[str] = []
+    seen_prefixes: set[str] = set()
+
+    def _add_prefix(p: str) -> None:
+        p = p.rstrip("/")
+        if p and p not in seen_prefixes:
+            seen_prefixes.add(p)
+            search_prefixes.append(p)
+
+    if folder is not None:
+        try:
+            _add_prefix(build_object_prefix(session, folder))
+        except HTTPException:
+            pass
+    _add_prefix(_prefix_for_row(session, row, folder))
+    _add_prefix(_prefix_for_row(session, row, None))
+
+    for search_prefix in search_prefixes:
+        for key in storage.list_object_keys(search_prefix, recursive=True):
+            leaf = key.rsplit("/", 1)[-1]
+            if leaf in basenames:
+                _add(key)
 
     for key in candidates:
         if storage.stat_object(key):

@@ -185,6 +185,8 @@ def _is_descendant(session: Session, ancestor_id: str, candidate_id: str) -> boo
 
 
 def _relocate_files_in_folders(session: Session, user: CurrentUser, folder_ids: list[str]) -> None:
+    from src.storage.object_resolver import resolve_object_key
+
     storage = get_minio_storage()
     files = (
         session.query(FileMetadata)
@@ -200,9 +202,11 @@ def _relocate_files_in_folders(session: Session, user: CurrentUser, folder_ids: 
         new_key = _rebuild_object_key(session, folder, row.name, user)
         if row.object_key != new_key:
             if row.status == "active":
-                if not storage.copy_object(row.object_key, new_key):
-                    raise HTTPException(status_code=500, detail=f"移动文件 {row.name} 失败")
-                storage.delete_object(row.object_key)
+                source_key = resolve_object_key(session, row, repair=True)
+                if source_key != new_key:
+                    if not storage.copy_object(source_key, new_key):
+                        raise HTTPException(status_code=500, detail=f"移动文件 {row.name} 失败")
+                    storage.delete_object(source_key)
             row.object_key = new_key
         row.updated_at = datetime.now(timezone.utc)
 
