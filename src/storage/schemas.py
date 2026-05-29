@@ -20,6 +20,10 @@ class TeamMemberAddRequest(BaseModel):
     role: str = Field(default="member", description="owner | member | viewer")
 
 
+class TeamMemberUpdateRequest(BaseModel):
+    role: str = Field(..., description="owner | member | viewer")
+
+
 class FolderCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
     parent_id: str | None = None
@@ -97,6 +101,27 @@ class ShareFileRequest(BaseModel):
     file_id: str
     team_id: str
     target_folder_id: str | None = None
+
+
+class ShareFolderRequest(BaseModel):
+    folder_id: str
+    team_id: str
+    target_folder_id: str | None = None
+
+
+class RenameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=512)
+
+
+class MoveRequest(BaseModel):
+    target_folder_id: str
+
+
+class TeamMemberResponse(BaseModel):
+    id: str
+    user_id: str
+    role: str
+    created_at: datetime | None = None
 
 
 class TeamResponse(BaseModel):

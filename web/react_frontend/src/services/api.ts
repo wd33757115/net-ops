@@ -389,6 +389,13 @@ export interface StorageTeam {
   member_count: number
 }
 
+export interface StorageTeamMember {
+  id: string
+  user_id: string
+  role: string
+  created_at?: string
+}
+
 export interface UploadInitResult {
   file_id: string
   object_key: string
@@ -403,6 +410,26 @@ export const storageApi = {
   },
   createTeam: async (data: { name: string; description?: string }) => {
     const response = await api.post('/storage/teams/', data)
+    return response.data
+  },
+  deleteTeam: async (teamId: string) => {
+    const response = await api.delete(`/storage/teams/${teamId}/`)
+    return response.data
+  },
+  listTeamMembers: async (teamId: string): Promise<StorageTeamMember[]> => {
+    const response = await api.get<StorageTeamMember[]>(`/storage/teams/${teamId}/members/`)
+    return response.data
+  },
+  addTeamMember: async (teamId: string, data: { user_id: string; role?: string }) => {
+    const response = await api.post(`/storage/teams/${teamId}/members/`, data)
+    return response.data
+  },
+  removeTeamMember: async (teamId: string, userId: string) => {
+    const response = await api.delete(`/storage/teams/${teamId}/members/${userId}/`)
+    return response.data
+  },
+  updateTeamMemberRole: async (teamId: string, userId: string, role: string) => {
+    const response = await api.patch(`/storage/teams/${teamId}/members/${userId}/`, { role })
     return response.data
   },
   list: async (params: { folder_id?: string; visibility?: string; team_id?: string }): Promise<StorageListResult> => {
@@ -424,6 +451,14 @@ export const storageApi = {
   },
   deleteFolder: async (folderId: string) => {
     const response = await api.delete(`/storage/folders/${folderId}/`)
+    return response.data
+  },
+  renameFolder: async (folderId: string, name: string) => {
+    const response = await api.patch(`/storage/folders/${folderId}/`, { name })
+    return response.data
+  },
+  moveFolder: async (folderId: string, targetFolderId: string) => {
+    const response = await api.post(`/storage/folders/${folderId}/move/`, { target_folder_id: targetFolderId })
     return response.data
   },
   uploadInit: async (data: {
@@ -449,8 +484,20 @@ export const storageApi = {
     const response = await api.delete(`/storage/files/${fileId}/`)
     return response.data
   },
+  renameFile: async (fileId: string, name: string) => {
+    const response = await api.patch(`/storage/files/${fileId}/`, { name })
+    return response.data
+  },
+  moveFile: async (fileId: string, targetFolderId: string) => {
+    const response = await api.post(`/storage/files/${fileId}/move/`, { target_folder_id: targetFolderId })
+    return response.data
+  },
   share: async (data: { file_id: string; team_id: string; target_folder_id?: string }) => {
     const response = await api.post('/storage/share/', data)
+    return response.data
+  },
+  shareFolder: async (data: { folder_id: string; team_id: string; target_folder_id?: string }) => {
+    const response = await api.post('/storage/share/folder/', data)
     return response.data
   },
 }

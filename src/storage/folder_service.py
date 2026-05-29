@@ -10,7 +10,8 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.auth.models import CurrentUser
-from src.infrastructure.db.models import StorageFolder
+from src.infrastructure.db.models import FileMetadata, StorageFolder
+from src.infrastructure.storage.minio_client import get_minio_storage
 from src.storage.permissions import check_folder_access, check_team_access
 from src.storage.schemas import FolderCreateRequest, FolderResponse, FolderTreeNode
 
@@ -167,13 +168,152 @@ def create_folder(session: Session, user: CurrentUser, req: FolderCreateRequest)
     return _folder_to_response(folder)
 
 
+def _collect_subtree_folder_ids(session: Session, root_id: str) -> list[str]:
+    ids = [root_id]
+    queue = [root_id]
+    while queue:
+        parent_id = queue.pop(0)
+        children = (
+            session.query(StorageFolder.id)
+            .filter(StorageFolder.parent_id == parent_id, StorageFolder.is_deleted.is_(False))
+            .all()
+        )
+        for (child_id,) in children:
+            ids.append(child_id)
+            queue.append(child_id)
+    return ids
+
+
+def _is_descendant(session: Session, ancestor_id: str, candidate_id: str) -> bool:
+    current = get_folder_or_404(session, candidate_id)
+    visited: set[str] = set()
+    while current.parent_id and current.id not in visited:
+        visited.add(current.id)
+        if current.parent_id == ancestor_id:
+            return True
+        current = get_folder_or_404(session, current.parent_id)
+    return False
+
+
+def _rebuild_object_key(session: Session, folder: StorageFolder, filename: str, user: CurrentUser) -> str:
+    prefix = build_object_prefix(session, folder, user)
+    return f"{prefix}/{_sanitize_segment(filename)}"
+
+
+def _relocate_files_in_folders(session: Session, user: CurrentUser, folder_ids: list[str]) -> None:
+    storage = get_minio_storage()
+    files = (
+        session.query(FileMetadata)
+        .filter(
+            FileMetadata.folder_id.in_(folder_ids),
+            FileMetadata.is_deleted.is_(False),
+            FileMetadata.status == "active",
+        )
+        .all()
+    )
+    for row in files:
+        folder = get_folder_or_404(session, row.folder_id)
+        new_key = _rebuild_object_key(session, folder, row.name, user)
+        if row.object_key != new_key:
+            if not storage.copy_object(row.object_key, new_key):
+                raise HTTPException(status_code=500, detail=f"移动文件 {row.name} 失败")
+            storage.delete_object(row.object_key)
+            row.object_key = new_key
+        row.updated_at = datetime.now(timezone.utc)
+
+
 def delete_folder(session: Session, user: CurrentUser, folder_id: str) -> None:
     folder = get_folder_or_404(session, folder_id)
     if folder.parent_id is None:
         raise HTTPException(status_code=400, detail="不能删除根目录")
     check_folder_access(session, user, folder, write=True)
-    folder.is_deleted = True
+
+    folder_ids = _collect_subtree_folder_ids(session, folder_id)
+    storage = get_minio_storage()
+    files = (
+        session.query(FileMetadata)
+        .filter(
+            FileMetadata.folder_id.in_(folder_ids),
+            FileMetadata.is_deleted.is_(False),
+        )
+        .all()
+    )
+    now = datetime.now(timezone.utc)
+    for row in files:
+        storage.delete_object(row.object_key)
+        row.is_deleted = True
+        row.updated_at = now
+
+    folders = session.query(StorageFolder).filter(StorageFolder.id.in_(folder_ids)).all()
+    for fld in folders:
+        fld.is_deleted = True
+        fld.updated_at = now
+
+
+def rename_folder(session: Session, user: CurrentUser, folder_id: str, new_name: str) -> FolderResponse:
+    folder = get_folder_or_404(session, folder_id)
+    if folder.parent_id is None:
+        raise HTTPException(status_code=400, detail="不能重命名根目录")
+    check_folder_access(session, user, folder, write=True)
+
+    name = new_name.strip()
+    dup = (
+        session.query(StorageFolder)
+        .filter(
+            StorageFolder.parent_id == folder.parent_id,
+            StorageFolder.name == name,
+            StorageFolder.is_deleted.is_(False),
+            StorageFolder.id != folder.id,
+        )
+        .first()
+    )
+    if dup:
+        raise HTTPException(status_code=409, detail="同级目录下已存在同名文件夹")
+
+    folder.name = name
     folder.updated_at = datetime.now(timezone.utc)
+    folder_ids = _collect_subtree_folder_ids(session, folder_id)
+    _relocate_files_in_folders(session, user, folder_ids)
+    session.flush()
+    return _folder_to_response(folder)
+
+
+def move_folder(session: Session, user: CurrentUser, folder_id: str, target_folder_id: str) -> FolderResponse:
+    folder = get_folder_or_404(session, folder_id)
+    if folder.parent_id is None:
+        raise HTTPException(status_code=400, detail="不能移动根目录")
+    target = get_folder_or_404(session, target_folder_id)
+    if folder.id == target.id:
+        raise HTTPException(status_code=400, detail="不能移动到自身")
+    if _is_descendant(session, folder.id, target.id):
+        raise HTTPException(status_code=400, detail="不能移动到子目录")
+
+    check_folder_access(session, user, folder, write=True)
+    check_folder_access(session, user, target, write=True)
+    if folder.visibility != target.visibility:
+        raise HTTPException(status_code=400, detail="只能在相同空间内移动")
+    if folder.visibility == "shared" and folder.team_id != target.team_id:
+        raise HTTPException(status_code=400, detail="团队目录不一致")
+
+    dup = (
+        session.query(StorageFolder)
+        .filter(
+            StorageFolder.parent_id == target.id,
+            StorageFolder.name == folder.name,
+            StorageFolder.is_deleted.is_(False),
+            StorageFolder.id != folder.id,
+        )
+        .first()
+    )
+    if dup:
+        raise HTTPException(status_code=409, detail="目标目录下已存在同名文件夹")
+
+    folder.parent_id = target.id
+    folder.updated_at = datetime.now(timezone.utc)
+    folder_ids = _collect_subtree_folder_ids(session, folder_id)
+    _relocate_files_in_folders(session, user, folder_ids)
+    session.flush()
+    return _folder_to_response(folder)
 
 
 def list_children(

@@ -14,10 +14,15 @@ from src.storage.schemas import (
     FolderCreateRequest,
     FolderResponse,
     FolderTreeNode,
+    MoveRequest,
+    RenameRequest,
     ShareFileRequest,
+    ShareFolderRequest,
     StorageListResponse,
     TeamCreateRequest,
     TeamMemberAddRequest,
+    TeamMemberResponse,
+    TeamMemberUpdateRequest,
     TeamResponse,
     UploadCompleteRequest,
     UploadInitRequest,
@@ -67,11 +72,56 @@ async def add_team_member(
     request: Request,
     team_id: str,
     body: TeamMemberAddRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_role(["admin"])),
 ):
     with get_db_session() as session:
         result = file_service.add_team_member(session, user, team_id, body)
         _audit(request, user, "storage_team_add_member", "team", team_id, body.model_dump())
+        return result
+
+
+@router.get("/teams/{team_id}/members", response_model=list[TeamMemberResponse])
+async def list_team_members(team_id: str, user: CurrentUser = Depends(get_current_user)):
+    with get_db_session() as session:
+        return file_service.list_team_members(session, user, team_id)
+
+
+@router.patch("/teams/{team_id}/members/{member_user_id}")
+async def update_team_member(
+    request: Request,
+    team_id: str,
+    member_user_id: str,
+    body: TeamMemberUpdateRequest,
+    user: CurrentUser = Depends(require_role(["admin"])),
+):
+    with get_db_session() as session:
+        result = file_service.update_team_member_role(session, user, team_id, member_user_id, body.role)
+        _audit(request, user, "storage_team_update_member", "team", team_id, {"user_id": member_user_id, "role": body.role})
+        return result
+
+
+@router.delete("/teams/{team_id}/members/{member_user_id}")
+async def remove_team_member(
+    request: Request,
+    team_id: str,
+    member_user_id: str,
+    user: CurrentUser = Depends(require_role(["admin"])),
+):
+    with get_db_session() as session:
+        result = file_service.remove_team_member(session, user, team_id, member_user_id)
+        _audit(request, user, "storage_team_remove_member", "team", team_id, {"user_id": member_user_id})
+        return result
+
+
+@router.delete("/teams/{team_id}")
+async def delete_team(
+    request: Request,
+    team_id: str,
+    user: CurrentUser = Depends(require_role(["admin"])),
+):
+    with get_db_session() as session:
+        result = file_service.delete_team(session, user, team_id)
+        _audit(request, user, "storage_team_delete", "team", team_id)
         return result
 
 
@@ -97,6 +147,32 @@ async def delete_folder(
         folder_service.delete_folder(session, user, folder_id)
         _audit(request, user, "storage_folder_delete", "folder", folder_id)
         return {"success": True}
+
+
+@router.patch("/folders/{folder_id}", response_model=FolderResponse)
+async def rename_folder(
+    request: Request,
+    folder_id: str,
+    body: RenameRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    with get_db_session() as session:
+        folder = folder_service.rename_folder(session, user, folder_id, body.name)
+        _audit(request, user, "storage_folder_rename", "folder", folder_id, {"name": body.name})
+        return folder
+
+
+@router.post("/folders/{folder_id}/move", response_model=FolderResponse)
+async def move_folder(
+    request: Request,
+    folder_id: str,
+    body: MoveRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    with get_db_session() as session:
+        folder = folder_service.move_folder(session, user, folder_id, body.target_folder_id)
+        _audit(request, user, "storage_folder_move", "folder", folder_id, body.model_dump())
+        return folder
 
 
 @router.get("/folders/tree", response_model=FolderTreeNode)
@@ -178,6 +254,32 @@ async def delete_file(
         return {"success": True}
 
 
+@router.patch("/files/{file_id}")
+async def rename_file(
+    request: Request,
+    file_id: str,
+    body: RenameRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    with get_db_session() as session:
+        file_row = file_service.rename_file(session, user, file_id, body)
+        _audit(request, user, "storage_file_rename", "file", file_id, {"name": body.name})
+        return file_row
+
+
+@router.post("/files/{file_id}/move")
+async def move_file(
+    request: Request,
+    file_id: str,
+    body: MoveRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    with get_db_session() as session:
+        file_row = file_service.move_file(session, user, file_id, body)
+        _audit(request, user, "storage_file_move", "file", file_id, body.model_dump())
+        return file_row
+
+
 @router.post("/share")
 async def share_file(
     request: Request,
@@ -188,3 +290,15 @@ async def share_file(
         file_row = file_service.share_file_to_team(session, user, body)
         _audit(request, user, "storage_share", "file", body.file_id, {"team_id": body.team_id})
         return file_row
+
+
+@router.post("/share/folder", response_model=FolderResponse)
+async def share_folder(
+    request: Request,
+    body: ShareFolderRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    with get_db_session() as session:
+        folder = file_service.share_folder_to_team(session, user, body)
+        _audit(request, user, "storage_share_folder", "folder", body.folder_id, {"team_id": body.team_id})
+        return folder

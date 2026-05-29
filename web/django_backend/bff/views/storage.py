@@ -48,14 +48,58 @@ async def proxy_storage_teams(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_jwt
 @sync_bff_view
+async def proxy_storage_team_detail(request: HttpRequest, team_id: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="DELETE",
+        fastapi_path=f"/api/v1/storage/teams/{team_id}",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
 async def proxy_storage_team_members(request: HttpRequest, team_id: str) -> JsonResponse:
+    headers = forward_client_headers(request)
+    if request.method == "GET":
+        return await proxy_to_fastapi(
+            method="GET",
+            fastapi_path=f"/api/v1/storage/teams/{team_id}/members",
+            request_id=request.bff_request_id,
+            extra_headers=headers,
+        )
     data = parse_json_body(request)
     return await proxy_to_fastapi(
         method="POST",
         fastapi_path=f"/api/v1/storage/teams/{team_id}/members",
         request_id=request.bff_request_id,
         data=data,
-        extra_headers=forward_client_headers(request),
+        extra_headers=headers,
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_storage_team_member_detail(
+    request: HttpRequest, team_id: str, member_user_id: str
+) -> JsonResponse:
+    headers = forward_client_headers(request)
+    if request.method == "PATCH":
+        data = parse_json_body(request)
+        return await proxy_to_fastapi(
+            method="PATCH",
+            fastapi_path=f"/api/v1/storage/teams/{team_id}/members/{member_user_id}",
+            request_id=request.bff_request_id,
+            data=data,
+            extra_headers=headers,
+        )
+    return await proxy_to_fastapi(
+        method="DELETE",
+        fastapi_path=f"/api/v1/storage/teams/{team_id}/members/{member_user_id}",
+        request_id=request.bff_request_id,
+        extra_headers=headers,
     )
 
 
@@ -77,10 +121,34 @@ async def proxy_storage_folders(request: HttpRequest) -> JsonResponse:
 @require_jwt
 @sync_bff_view
 async def proxy_storage_folder_detail(request: HttpRequest, folder_id: str) -> JsonResponse:
+    headers = forward_client_headers(request)
+    if request.method == "PATCH":
+        data = parse_json_body(request)
+        return await proxy_to_fastapi(
+            method="PATCH",
+            fastapi_path=f"/api/v1/storage/folders/{folder_id}",
+            request_id=request.bff_request_id,
+            data=data,
+            extra_headers=headers,
+        )
     return await proxy_to_fastapi(
         method="DELETE",
         fastapi_path=f"/api/v1/storage/folders/{folder_id}",
         request_id=request.bff_request_id,
+        extra_headers=headers,
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_storage_folder_move(request: HttpRequest, folder_id: str) -> JsonResponse:
+    data = parse_json_body(request)
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/storage/folders/{folder_id}/move",
+        request_id=request.bff_request_id,
+        data=data,
         extra_headers=forward_client_headers(request),
     )
 
@@ -161,10 +229,34 @@ async def proxy_storage_file_download(request: HttpRequest, file_id: str) -> Jso
 @require_jwt
 @sync_bff_view
 async def proxy_storage_file_detail(request: HttpRequest, file_id: str) -> JsonResponse:
+    headers = forward_client_headers(request)
+    if request.method == "PATCH":
+        data = parse_json_body(request)
+        return await proxy_to_fastapi(
+            method="PATCH",
+            fastapi_path=f"/api/v1/storage/files/{file_id}",
+            request_id=request.bff_request_id,
+            data=data,
+            extra_headers=headers,
+        )
     return await proxy_to_fastapi(
         method="DELETE",
         fastapi_path=f"/api/v1/storage/files/{file_id}",
         request_id=request.bff_request_id,
+        extra_headers=headers,
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_storage_file_move(request: HttpRequest, file_id: str) -> JsonResponse:
+    data = parse_json_body(request)
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/storage/files/{file_id}/move",
+        request_id=request.bff_request_id,
+        data=data,
         extra_headers=forward_client_headers(request),
     )
 
@@ -177,6 +269,20 @@ async def proxy_storage_share(request: HttpRequest) -> JsonResponse:
     return await proxy_to_fastapi(
         method="POST",
         fastapi_path="/api/v1/storage/share",
+        request_id=request.bff_request_id,
+        data=data,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_storage_share_folder(request: HttpRequest) -> JsonResponse:
+    data = parse_json_body(request)
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/storage/share/folder",
         request_id=request.bff_request_id,
         data=data,
         extra_headers=forward_client_headers(request),
