@@ -106,7 +106,11 @@ class MinIOStorage:
 
         try:
             response = self._client.get_object(self._bucket_name, object_name)
-            return response.read()
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
         except S3Error:
             return None
 
@@ -134,6 +138,28 @@ class MinIOStorage:
         except S3Error as e:
             print(f"❌ MinIO 删除对象失败: {e}")
             return False
+
+    def list_object_keys(self, prefix: str, *, recursive: bool = True) -> list[str]:
+        if not self._client:
+            return []
+        try:
+            objects = self._client.list_objects(
+                self._bucket_name,
+                prefix=prefix.rstrip("/") + "/" if prefix else "",
+                recursive=recursive,
+            )
+            return [obj.object_name for obj in objects if obj.object_name]
+        except S3Error as e:
+            print(f"❌ MinIO 列举对象失败: {e}")
+            return []
+
+    def delete_objects_by_prefix(self, prefix: str) -> int:
+        keys = self.list_object_keys(prefix, recursive=True)
+        deleted = 0
+        for key in keys:
+            if self.delete_object(key):
+                deleted += 1
+        return deleted
 
     def stat_object(self, object_name: str) -> dict | None:
         if not self._client:

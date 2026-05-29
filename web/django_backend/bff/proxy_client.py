@@ -206,3 +206,46 @@ async def proxy_stream_to_fastapi(
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
+
+
+async def proxy_binary_to_fastapi(
+    method: str,
+    fastapi_path: str,
+    request_id: str,
+    params: dict | None = None,
+    timeout: int | None = None,
+    extra_headers: dict | None = None,
+):
+    """代理二进制响应（文件下载/预览）。"""
+    from django.http import HttpResponse
+
+    client = _get_client()
+    url = _build_url(fastapi_path)
+    headers = _build_headers(request_id, extra_headers)
+    req_kwargs: dict[str, Any] = {"headers": headers}
+    if timeout is not None:
+        req_kwargs["timeout"] = httpx.Timeout(timeout)
+    if params:
+        req_kwargs["params"] = params
+
+    try:
+        response = await client.request(method, url, **req_kwargs)
+    except httpx.TimeoutException:
+        return bff_error(f"Upstream service timeout after {timeout or DEFAULT_TIMEOUT}s", 504)
+    except httpx.ConnectError as exc:
+        return bff_error(f"Upstream service unreachable: {str(exc)}", 502)
+    except Exception as exc:
+        logger.error(f"[{request_id}] Binary proxy error: {method} {url} -> {exc}")
+        return bff_error(str(exc), 500)
+
+    if response.status_code >= 400:
+        return await _proxy_json_response(response, request_id)
+
+    http_resp = HttpResponse(
+        response.content,
+        status=response.status_code,
+        content_type=response.headers.get("content-type", "application/octet-stream"),
+    )
+    if cd := response.headers.get("content-disposition"):
+        http_resp["Content-Disposition"] = cd
+    return http_resp

@@ -4,7 +4,7 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from ..decorators import require_jwt
-from ..proxy_client import proxy_to_fastapi
+from ..proxy_client import proxy_binary_to_fastapi, proxy_to_fastapi
 from ..sync_async import sync_bff_view
 from ..views._helpers import forward_client_headers, parse_json_body
 
@@ -210,6 +210,23 @@ async def proxy_storage_upload_complete(request: HttpRequest) -> JsonResponse:
         request_id=request.bff_request_id,
         data=data,
         extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_storage_file_content(request: HttpRequest, file_id: str) -> JsonResponse:
+    qs = request.META.get("QUERY_STRING", "")
+    path = f"/api/v1/storage/files/{file_id}/content"
+    if qs:
+        path = f"{path}?{qs}"
+    return await proxy_binary_to_fastapi(
+        method="GET",
+        fastapi_path=path,
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+        timeout=120,
     )
 
 

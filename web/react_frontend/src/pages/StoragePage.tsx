@@ -95,6 +95,18 @@ function flattenFolderOptions(
 
 const DRAG_MIME = 'application/x-netops-storage-item'
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 const StoragePage: React.FC = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
@@ -267,10 +279,10 @@ const StoragePage: React.FC = () => {
 
   const handleDownload = async (file: StorageFile) => {
     try {
-      const res = await storageApi.download(file.id)
-      window.open(res.download_url, '_blank', 'noopener,noreferrer')
-    } catch {
-      message.error('获取下载链接失败')
+      const blob = await storageApi.fetchContent(file.id, 'attachment')
+      downloadBlob(blob, file.name)
+    } catch (e: unknown) {
+      message.error((e as Error).message || '下载失败')
     }
   }
 
@@ -281,23 +293,29 @@ const StoragePage: React.FC = () => {
     setPreviewUrl('')
     setPreviewText('')
     try {
-      const res = await storageApi.download(file.id)
-      const url = res.download_url
+      const blob = await storageApi.fetchContent(file.id, 'inline')
+      const objectUrl = URL.createObjectURL(blob)
+
       if (isPreviewableInBrowser(file.name, file.content_type)) {
-        setPreviewUrl(url)
+        setPreviewUrl(objectUrl)
         const ct = (file.content_type || '').toLowerCase()
         if (ct.startsWith('text/') || file.name.match(/\.(txt|log|json|md|xml|yaml|yml|ini|cfg)$/i)) {
-          const textRes = await fetch(url)
-          const text = await textRes.text()
+          const text = await blob.text()
           setPreviewText(text.slice(0, 200_000))
         }
       } else {
-        window.open(url, '_blank', 'noopener,noreferrer')
-        message.info('已在新窗口打开，可使用系统默认程序预览')
+        const opened = window.open(objectUrl, '_blank', 'noopener,noreferrer')
+        if (!opened) {
+          downloadBlob(blob, file.name)
+          message.info('已改为下载，请用本地程序打开')
+        } else {
+          message.info('已在新窗口打开，可使用系统默认程序预览')
+        }
         setPreviewOpen(false)
+        URL.revokeObjectURL(objectUrl)
       }
-    } catch {
-      message.error('预览失败')
+    } catch (e: unknown) {
+      message.error((e as Error).message || '预览失败')
       setPreviewOpen(false)
     } finally {
       setPreviewLoading(false)
@@ -804,12 +822,22 @@ const StoragePage: React.FC = () => {
       <Modal
         title={previewFile?.name || '预览'}
         open={previewOpen}
-        onCancel={() => setPreviewOpen(false)}
+        onCancel={() => {
+          if (previewUrl) URL.revokeObjectURL(previewUrl)
+          setPreviewOpen(false)
+        }}
         footer={[
           <Button key="dl" onClick={() => previewFile && handleDownload(previewFile)}>
             下载
           </Button>,
-          <Button key="close" type="primary" onClick={() => setPreviewOpen(false)}>
+          <Button
+            key="close"
+            type="primary"
+            onClick={() => {
+              if (previewUrl) URL.revokeObjectURL(previewUrl)
+              setPreviewOpen(false)
+            }}
+          >
             关闭
           </Button>,
         ]}

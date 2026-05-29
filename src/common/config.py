@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     MINIO_SECURE: bool = False
     MINIO_BUCKET_NAME: str = "netops-files"
 
+    # 网盘配额（可在 .env 覆盖）
+    STORAGE_MAX_FILE_BYTES: int = 500 * 1024 * 1024  # 单文件 500MB
+    STORAGE_MAX_USER_BYTES: int = 20 * 1024 * 1024 * 1024  # 个人空间 20GB
+
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION: str = "netops_knowledge"

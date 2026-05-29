@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -177,6 +177,21 @@ class StorageFolder(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_deleted = Column(Boolean, default=False)
+
+    __table_args__ = (
+        Index(
+            "uq_storage_folder_private_root",
+            "owner_id",
+            unique=True,
+            postgresql_where=text("parent_id IS NULL AND visibility = 'private' AND is_deleted = false"),
+        ),
+        Index(
+            "uq_storage_folder_shared_root",
+            "team_id",
+            unique=True,
+            postgresql_where=text("parent_id IS NULL AND visibility = 'shared' AND is_deleted = false"),
+        ),
+    )
 
 
 class FileMetadata(Base):

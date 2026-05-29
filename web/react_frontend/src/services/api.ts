@@ -480,6 +480,15 @@ export const storageApi = {
     const response = await api.get<{ download_url: string; filename: string }>(`/storage/files/${fileId}/download/`)
     return response.data
   },
+  /** 经 BFF 代理读取文件内容，避免浏览器直连 MinIO（CORS / HEAD 403） */
+  fetchContent: async (fileId: string, disposition: 'inline' | 'attachment' = 'inline'): Promise<Blob> => {
+    const response = await api.get(`/storage/files/${fileId}/content/`, {
+      responseType: 'blob',
+      params: { disposition },
+      timeout: 300000,
+    })
+    return response.data as Blob
+  },
   deleteFile: async (fileId: string) => {
     const response = await api.delete(`/storage/files/${fileId}/`)
     return response.data

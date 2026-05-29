@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 
 from src.auth.dependencies import get_current_user, require_role
 from src.auth.models import CurrentUser
@@ -240,6 +243,27 @@ async def download_file(
         result = file_service.get_download_url(session, user, file_id)
         _audit(request, user, "storage_download", "file", file_id)
         return result
+
+
+@router.get("/files/{file_id}/content")
+async def file_content(
+    request: Request,
+    file_id: str,
+    disposition: str = Query("inline", description="inline 或 attachment"),
+    user: CurrentUser = Depends(get_current_user),
+):
+    disp = "attachment" if disposition == "attachment" else "inline"
+    with get_db_session() as session:
+        filename, content_type, data = file_service.read_file_content(session, user, file_id)
+        _audit(request, user, "storage_file_content", "file", file_id, {"disposition": disp})
+        encoded_name = quote(filename)
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"{disp}; filename*=UTF-8''{encoded_name}",
+            },
+        )
 
 
 @router.delete("/files/{file_id}")

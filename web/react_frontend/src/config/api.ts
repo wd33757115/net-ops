@@ -110,6 +110,9 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
   (response) => {
+    if (response.config.responseType === 'blob') {
+      return response
+    }
     if (isBffEnvelope(response.data)) {
       if (!response.data.success) {
         return Promise.reject(new Error(response.data.error || 'Request failed'))
@@ -118,10 +121,19 @@ api.interceptors.response.use(
     }
     return response
   },
-  async (error: AxiosError<BffEnvelope | { error?: string; detail?: string }>) => {
+  async (error: AxiosError<BffEnvelope | Blob | { error?: string; detail?: string }>) => {
     const status = error.response?.status
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
-    const payload = error.response?.data
+    let payload = error.response?.data
+    if (original?.responseType === 'blob' && payload instanceof Blob) {
+      try {
+        const text = await payload.text()
+        payload = JSON.parse(text) as BffEnvelope
+        error.response!.data = payload
+      } catch {
+        /* 保留原始 Blob */
+      }
+    }
     const payloadObj =
       payload && typeof payload === 'object' && !Array.isArray(payload)
         ? (payload as Record<string, unknown>)
