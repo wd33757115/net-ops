@@ -67,6 +67,7 @@ from src.gateway.bff_security import (
 from src.gateway.conversation_service import get_conversation_service
 from src.gateway.skills_api import router as skills_router
 from src.gateway.knowledge_api import router as knowledge_router
+from src.gateway.storage_api import router as storage_router
 from src.gateway.schemas import (
     AddMessageRequest,
     ChatFileUploadRequest,
@@ -222,6 +223,7 @@ app = FastAPI(
 
 app.include_router(skills_router)
 app.include_router(knowledge_router)
+app.include_router(storage_router)
 
 # =============================================================================
 # CORS 中间件（生产环境请限制 origins）

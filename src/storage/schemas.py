@@ -1,0 +1,107 @@
+"""网盘 API Pydantic 模型。"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+Visibility = Literal["private", "shared"]
+
+
+class TeamCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    description: str | None = None
+
+
+class TeamMemberAddRequest(BaseModel):
+    user_id: str
+    role: str = Field(default="member", description="owner | member | viewer")
+
+
+class FolderCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=256)
+    parent_id: str | None = None
+    visibility: Visibility = "private"
+    team_id: str | None = None
+
+
+class FolderResponse(BaseModel):
+    id: str
+    name: str
+    parent_id: str | None
+    visibility: str
+    team_id: str | None
+    owner_id: str | None
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+class FolderTreeNode(BaseModel):
+    id: str
+    name: str
+    parent_id: str | None
+    children: list["FolderTreeNode"] = Field(default_factory=list)
+
+
+class FileResponse(BaseModel):
+    id: str
+    name: str
+    folder_id: str | None
+    visibility: str
+    team_id: str | None
+    owner_id: str | None
+    content_type: str | None
+    size_bytes: int
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+class StorageListResponse(BaseModel):
+    folder: FolderResponse | None
+    folders: list[FolderResponse]
+    files: list[FileResponse]
+    breadcrumb: list[FolderResponse]
+
+
+class UploadInitRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=512)
+    folder_id: str | None = None
+    visibility: Visibility = "private"
+    team_id: str | None = None
+    content_type: str = "application/octet-stream"
+    size_bytes: int = Field(default=0, ge=0)
+
+
+class UploadInitResponse(BaseModel):
+    file_id: str
+    object_key: str
+    upload_url: str
+    expires_in: int
+
+
+class UploadCompleteRequest(BaseModel):
+    file_id: str
+    size_bytes: int | None = None
+
+
+class DownloadResponse(BaseModel):
+    file_id: str
+    filename: str
+    download_url: str
+    expires_in: int
+
+
+class ShareFileRequest(BaseModel):
+    file_id: str
+    team_id: str
+    target_folder_id: str | None = None
+
+
+class TeamResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None
+    role: str | None = None
+    member_count: int = 0

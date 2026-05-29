@@ -110,6 +110,63 @@ class MinIOStorage:
         except S3Error:
             return None
 
+    def presigned_put_url(self, object_name: str, expires: int = 3600) -> str | None:
+        if not self._client:
+            return None
+        try:
+            from datetime import timedelta
+            url = self._client.presigned_put_object(
+                bucket_name=self._bucket_name,
+                object_name=object_name,
+                expires=timedelta(seconds=expires),
+            )
+            return str(url)
+        except S3Error as e:
+            print(f"❌ MinIO 生成上传预签名URL失败: {e}")
+            return None
+
+    def delete_object(self, object_name: str) -> bool:
+        if not self._client:
+            return False
+        try:
+            self._client.remove_object(self._bucket_name, object_name)
+            return True
+        except S3Error as e:
+            print(f"❌ MinIO 删除对象失败: {e}")
+            return False
+
+    def stat_object(self, object_name: str) -> dict | None:
+        if not self._client:
+            return None
+        try:
+            stat = self._client.stat_object(self._bucket_name, object_name)
+            return {
+                "size": stat.size,
+                "etag": stat.etag,
+                "content_type": stat.content_type,
+            }
+        except S3Error:
+            return None
+
+    def copy_object(self, source_key: str, dest_key: str) -> bool:
+        if not self._client:
+            return False
+        try:
+            from minio.commonconfig import CopySource
+            self._client.copy_object(
+                self._bucket_name,
+                dest_key,
+                CopySource(self._bucket_name, source_key),
+            )
+            return True
+        except S3Error as e:
+            print(f"❌ MinIO 复制对象失败: {e}")
+            return False
+
+    @property
+    def bucket_name(self) -> str | None:
+        return self._bucket_name
+
 
 def get_minio_storage() -> MinIOStorage:
     return MinIOStorage()

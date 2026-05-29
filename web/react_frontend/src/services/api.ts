@@ -350,6 +350,111 @@ function encodeKnowledgePath(relativePath: string): string {
   return relativePath.split('/').map(encodeURIComponent).join('/')
 }
 
+export interface StorageFolder {
+  id: string
+  name: string
+  parent_id: string | null
+  visibility: string
+  team_id: string | null
+  owner_id: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface StorageFile {
+  id: string
+  name: string
+  folder_id: string | null
+  visibility: string
+  team_id: string | null
+  owner_id: string | null
+  content_type: string | null
+  size_bytes: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface StorageListResult {
+  folder: StorageFolder | null
+  folders: StorageFolder[]
+  files: StorageFile[]
+  breadcrumb: StorageFolder[]
+}
+
+export interface StorageTeam {
+  id: string
+  name: string
+  description: string | null
+  role: string | null
+  member_count: number
+}
+
+export interface UploadInitResult {
+  file_id: string
+  object_key: string
+  upload_url: string
+  expires_in: number
+}
+
+export const storageApi = {
+  listTeams: async (): Promise<StorageTeam[]> => {
+    const response = await api.get<StorageTeam[]>('/storage/teams/')
+    return response.data
+  },
+  createTeam: async (data: { name: string; description?: string }) => {
+    const response = await api.post('/storage/teams/', data)
+    return response.data
+  },
+  list: async (params: { folder_id?: string; visibility?: string; team_id?: string }): Promise<StorageListResult> => {
+    const response = await api.get<StorageListResult>('/storage/list/', { params })
+    return response.data
+  },
+  folderTree: async (params: { visibility?: string; team_id?: string }) => {
+    const response = await api.get('/storage/folders/tree/', { params })
+    return response.data
+  },
+  createFolder: async (data: {
+    name: string
+    parent_id?: string | null
+    visibility?: string
+    team_id?: string | null
+  }) => {
+    const response = await api.post('/storage/folders/', data)
+    return response.data
+  },
+  deleteFolder: async (folderId: string) => {
+    const response = await api.delete(`/storage/folders/${folderId}/`)
+    return response.data
+  },
+  uploadInit: async (data: {
+    filename: string
+    folder_id?: string | null
+    visibility?: string
+    team_id?: string | null
+    content_type?: string
+    size_bytes?: number
+  }): Promise<UploadInitResult> => {
+    const response = await api.post<UploadInitResult>('/storage/upload/init/', data)
+    return response.data
+  },
+  uploadComplete: async (data: { file_id: string; size_bytes?: number }) => {
+    const response = await api.post('/storage/upload/complete/', data)
+    return response.data
+  },
+  download: async (fileId: string): Promise<{ download_url: string; filename: string }> => {
+    const response = await api.get<{ download_url: string; filename: string }>(`/storage/files/${fileId}/download/`)
+    return response.data
+  },
+  deleteFile: async (fileId: string) => {
+    const response = await api.delete(`/storage/files/${fileId}/`)
+    return response.data
+  },
+  share: async (data: { file_id: string; team_id: string; target_folder_id?: string }) => {
+    const response = await api.post('/storage/share/', data)
+    return response.data
+  },
+}
+
 export const wsApi = {
   connectChat: (threadId?: string): WebSocket => {
     return new WebSocket(getChatWebSocketUrl(threadId))

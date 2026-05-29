@@ -1,7 +1,7 @@
 from django.urls import path
 
 from . import auth, user_admin
-from .views import chat, conversations, health, itsm, knowledge, rag, skills, system, tasks, upload
+from .views import chat, conversations, health, itsm, knowledge, rag, skills, storage, system, tasks, upload
 
 urlpatterns = [
     path("auth/login/", auth.bff_login, name="bff_login"),
@@ -68,4 +68,16 @@ urlpatterns = [
     ),
     path("knowledge/stats/", knowledge.proxy_knowledge_stats, name="bff_knowledge_stats"),
     path("knowledge/reindex/", knowledge.proxy_knowledge_reindex, name="bff_knowledge_reindex"),
+    path("storage/health/", storage.proxy_storage_health, name="bff_storage_health"),
+    path("storage/teams/", storage.proxy_storage_teams, name="bff_storage_teams"),
+    path("storage/teams/<str:team_id>/members/", storage.proxy_storage_team_members, name="bff_storage_team_members"),
+    path("storage/folders/tree/", storage.proxy_storage_folder_tree, name="bff_storage_folder_tree"),
+    path("storage/folders/", storage.proxy_storage_folders, name="bff_storage_folders"),
+    path("storage/folders/<str:folder_id>/", storage.proxy_storage_folder_detail, name="bff_storage_folder_detail"),
+    path("storage/list/", storage.proxy_storage_list, name="bff_storage_list"),
+    path("storage/upload/init/", storage.proxy_storage_upload_init, name="bff_storage_upload_init"),
+    path("storage/upload/complete/", storage.proxy_storage_upload_complete, name="bff_storage_upload_complete"),
+    path("storage/files/<str:file_id>/download/", storage.proxy_storage_file_download, name="bff_storage_file_download"),
+    path("storage/files/<str:file_id>/", storage.proxy_storage_file_detail, name="bff_storage_file_detail"),
+    path("storage/share/", storage.proxy_storage_share, name="bff_storage_share"),
 ]

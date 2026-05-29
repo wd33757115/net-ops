@@ -5,6 +5,7 @@ import {
   EditOutlined,
   AppstoreOutlined,
   BookOutlined,
+  CloudOutlined,
   DashboardOutlined,
   TeamOutlined,
   LogoutOutlined,
@@ -80,6 +81,7 @@ const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ onNavigate }) => {
       { key: 'new-chat', icon: <EditOutlined />, label: '新建聊天', action: 'new-chat' as const },
       { key: '/skills', icon: <AppstoreOutlined />, label: 'Skills', action: 'route' as const },
       { key: '/knowledge', icon: <BookOutlined />, label: '知识库', action: 'route' as const },
+      { key: '/storage', icon: <CloudOutlined />, label: '网盘', action: 'route' as const },
       { key: '/status', icon: <DashboardOutlined />, label: 'Status', action: 'route' as const },
     ]
     if (user?.role === 'admin') {

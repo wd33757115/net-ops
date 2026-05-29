@@ -122,10 +122,15 @@ api.interceptors.response.use(
     const status = error.response?.status
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
     const payload = error.response?.data
+    const payloadObj =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)
+        : null
     const serverMessage =
       (isBffEnvelope(payload) ? payload.error : null) ||
-      (payload && 'error' in payload ? payload.error : undefined) ||
-      (payload && 'detail' in payload ? String(payload.detail) : undefined) ||
+      (payloadObj && typeof payloadObj.error === 'string' ? payloadObj.error : undefined) ||
+      (payloadObj && payloadObj.detail != null ? String(payloadObj.detail) : undefined) ||
+      (typeof payload === 'string' && payload.trimStart().startsWith('<') ? '接口不存在或服务未启动' : undefined) ||
       error.message
 
     if (status === 401 && original && !original._retry && !original.url?.includes('/auth/login')) {

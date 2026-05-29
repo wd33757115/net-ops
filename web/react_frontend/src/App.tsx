@@ -8,6 +8,7 @@ import ChatPage from './pages/ChatPage'
 import SkillsPage from './pages/SkillsPage'
 import KnowledgePage from './pages/KnowledgePage'
 import StatusPage from './pages/StatusPage'
+import StoragePage from './pages/StoragePage'
 import UsersPage from './pages/UsersPage'
 import LoginPage from './pages/LoginPage'
 
@@ -29,6 +30,7 @@ const App: React.FC = () => {
             <Route path="chat" element={<ChatPage />} />
             <Route path="skills" element={<SkillsPage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
+            <Route path="storage" element={<StoragePage />} />
             <Route path="status" element={<StatusPage />} />
             <Route
               path="users"

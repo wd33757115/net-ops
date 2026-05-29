@@ -134,6 +134,73 @@ class Message(Base):
     )
 
 
+class Team(Base):
+    """团队（共享网盘归属）。"""
+
+    __tablename__ = "netops_teams"
+
+    id = Column(String(64), primary_key=True, index=True)
+    name = Column(String(128), nullable=False)
+    description = Column(Text, nullable=True)
+    created_by = Column(String(64), index=True, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    is_deleted = Column(Boolean, default=False)
+
+
+class TeamMember(Base):
+    """团队成员与团队内角色。"""
+
+    __tablename__ = "netops_team_members"
+
+    id = Column(String(64), primary_key=True, index=True)
+    team_id = Column(String(64), index=True, nullable=False)
+    user_id = Column(String(64), index=True, nullable=False)
+    role = Column(String(32), default="member", comment="owner / member / viewer")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    is_deleted = Column(Boolean, default=False)
+
+
+class StorageFolder(Base):
+    """虚拟目录（DB 维护层级，MinIO 用 object_key 前缀映射）。"""
+
+    __tablename__ = "netops_storage_folders"
+
+    id = Column(String(64), primary_key=True, index=True)
+    name = Column(String(256), nullable=False)
+    parent_id = Column(String(64), index=True, nullable=True)
+    owner_id = Column(String(64), index=True, nullable=True, comment="个人目录归属用户")
+    team_id = Column(String(64), index=True, nullable=True, comment="团队共享目录归属团队")
+    visibility = Column(String(32), default="private", comment="private / shared")
+    path_cache = Column(String(1024), nullable=True, comment="物化路径缓存")
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    is_deleted = Column(Boolean, default=False)
+
+
+class FileMetadata(Base):
+    """文件元数据（对象存储在 MinIO）。"""
+
+    __tablename__ = "netops_file_metadata"
+
+    id = Column(String(64), primary_key=True, index=True)
+    name = Column(String(512), nullable=False)
+    folder_id = Column(String(64), index=True, nullable=True)
+    object_key = Column(String(1024), nullable=False, unique=True, index=True)
+    owner_id = Column(String(64), index=True, nullable=True)
+    team_id = Column(String(64), index=True, nullable=True)
+    visibility = Column(String(32), default="private", comment="private / shared")
+    content_type = Column(String(128), nullable=True)
+    size_bytes = Column(Integer, default=0)
+    etag = Column(String(128), nullable=True)
+    status = Column(String(32), default="active", comment="pending / active")
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    is_deleted = Column(Boolean, default=False)
+
+
 def init_db_models(engine):
     Base.metadata.create_all(bind=engine)
     print("✅ 业务表初始化完成")
