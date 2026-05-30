@@ -246,22 +246,11 @@ def _extract_device_filter_params(query: str) -> dict[str, Any]:
     return params
 
 
-def _is_itsm_firewall_workflow(query: str, source: str | None) -> bool:
-    """是否应启动 ITSM 防火墙变更 Workflow（策略 → 变更工单 → 回调）。"""
-    if source == "itsm_webhook":
-        return True
-    if not re.search(r"防火墙|策略", query, re.IGNORECASE):
-        return False
-    workflow_hints = [
-        r"变更工单",
-        r"编写变更",
-        r"itsm",
-        r"提交变更",
-        r"回调",
-        r"变更流程",
-        r"开通.*变更",
-    ]
-    return any(re.search(p, query, re.IGNORECASE) for p in workflow_hints)
+def _match_workflow_intent(query: str, source: str | None):
+    """从 Workflow 插件包匹配聊天/来源应启动的 Workflow。"""
+    from src.core.plugins.chat_intent import match_chat_workflow
+
+    return match_chat_workflow(query, source)
 
 
 def _build_heuristic_skill_params(
@@ -525,10 +514,8 @@ def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
         f"耗时 {duration_ms:.0f}ms"
     )
 
-    ticket_id = _extract_ticket_id(query) or state.get("ticket_id")
-    ticket_update = {}
-    if ticket_id:
-        ticket_update["ticket_id"] = ticket_id
+    ticket_id = _extract_ticket_id(query)
+    ticket_update = {"ticket_id": ticket_id}
 
     return {
         **state,
@@ -536,8 +523,12 @@ def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
         "skill_matches": matches,
         "skill_instructions": skill_instructions,
         "loaded_skills": loaded_skills,
-        # 每轮对话清空 Skill 执行结果，避免复用同 thread checkpoint 中的旧失败/成功记录
+        # 每轮对话清空 Skill / Workflow 路由状态，避免 checkpoint 污染后续普通聊天
         "intermediate_results": INTERMEDIATE_RESULTS_RESET,
+        "workflow_type": None,
+        "workflow_run_id": None,
+        "next_agent": None,
+        "execution_plan": None,
     }
 
 
@@ -551,13 +542,14 @@ def supervisor_node_v2(state: SupervisorStateV2) -> SupervisorStateV2:
 
     print(f"\n[Supervisor v2] supervisor_node | 已加载 Skill: {loaded_skills}")
 
-    if _is_itsm_firewall_workflow(query, state.get("source")):
-        print("   识别 ITSM 防火墙变更 Workflow → workflow_starter")
+    workflow_intent = _match_workflow_intent(query, state.get("source"))
+    if workflow_intent:
+        print(f"   识别 Workflow 插件 → {workflow_intent.workflow}")
         increment_counter("supervisor_v2_plan_total", tags={"result": "workflow"})
         observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
         return {
             **state,
-            "workflow_type": "itsm-firewall-change",
+            "workflow_type": workflow_intent.workflow,
             "next_agent": "workflow_starter",
             "fallback_to_rag": False,
         }
@@ -807,28 +799,48 @@ def route_after_executor_v2(state: SupervisorStateV2) -> str:
 
 
 def workflow_starter_node(state: SupervisorStateV2) -> SupervisorStateV2:
-    """启动 ITSM 防火墙变更 Workflow，立即返回 run_id（长时任务在 Celery 执行）。"""
-    from src.core.workflows import ITSM_FIREWALL_CHANGE, WorkflowEngine
-    from src.gateway.itsm_workflow import build_chat_workflow_context
+    """启动 Workflow 插件（长时任务在 Celery 执行）。"""
+    from src.core.plugins.chat_intent import (
+        MissingTicketIdError,
+        build_chat_workflow_context,
+        format_workflow_start_message,
+        get_chat_intent_registry,
+        require_ticket_id_from_query,
+    )
+    from src.core.workflows.engine import WorkflowEngine
 
-    context = build_chat_workflow_context(state)
+    workflow_name = state.get("workflow_type") or "itsm-firewall-change"
+    intent = get_chat_intent_registry().get_intent(workflow_name)
+    query = _get_query(state)
+    try:
+        if intent:
+            context = build_chat_workflow_context(state, intent)
+        else:
+            context = {
+                "ticket_id": require_ticket_id_from_query(query),
+                "ticket_title": state.get("ticket_title") or "Workflow 任务",
+                "policy_file_url": state.get("uploaded_file_path"),
+            }
+    except MissingTicketIdError as exc:
+        return {
+            **state,
+            "messages": state["messages"] + [AIMessage(content=str(exc))],
+            "next_agent": "end",
+            "agent_type": "workflow_starter",
+        }
+
     run_id = WorkflowEngine.start(
-        ITSM_FIREWALL_CHANGE.name,
+        workflow_name,
         context,
         source=state.get("source") or "chat",
         user_id=state.get("user_id"),
         thread_id=state.get("thread_id"),
     )
-    ticket = context.get("ticket_id") or "—"
-    content = (
-        f"[OK] 已启动 ITSM 防火墙变更流程\n\n"
-        f"- **流程 ID**: `{run_id}`\n"
-        f"- **工单**: {ticket}\n"
-        f"- **步骤**: 生成防火墙策略 → 编写变更工单 Excel → 回调 ITSM\n\n"
-        f"流程在后台执行，可通过 `GET /api/v1/workflows/{run_id}` 查询进度；"
-        f"完成后将收到站内通知。"
-    )
-    print(f"[Supervisor v2] workflow_starter | run_id={run_id}")
+    if intent:
+        content = format_workflow_start_message(intent, run_id, context)
+    else:
+        content = f"[OK] 已启动 Workflow `{workflow_name}`\n\n- **流程 ID**: `{run_id}`"
+    print(f"[Supervisor v2] workflow_starter | workflow={workflow_name} run_id={run_id}")
     return {
         **state,
         "workflow_run_id": run_id,
@@ -906,7 +918,8 @@ def knowledge_qa_node_wrapper_v2(state: SupervisorStateV2) -> SupervisorStateV2:
 
 
 def route_after_supervisor_v2(state: SupervisorStateV2) -> str:
-    if state.get("workflow_type") == "itsm-firewall-change":
+    next_agent = state.get("next_agent")
+    if next_agent == "workflow_starter":
         return "workflow_starter"
     plan = state.get("execution_plan")
     if not plan or plan.fallback_to_rag or not plan.skills:

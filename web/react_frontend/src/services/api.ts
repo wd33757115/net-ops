@@ -317,6 +317,10 @@ export const skillApi = {
     const response = await api.delete(`/skills/${name}/`)
     return response.data
   },
+  testRun: async (name: string, params: Record<string, unknown> = {}) => {
+    const response = await api.post(`/skills/${name}/test-run/`, { params })
+    return response.data
+  },
 }
 
 export const knowledgeApi = {
@@ -548,10 +552,166 @@ export const notificationApi = {
     const response = await api.post(`/notifications/${id}/read/`)
     return response.data
   },
+  clearAll: async () => {
+    const response = await api.post('/notifications/clear/')
+    return response.data
+  },
 }
 
 export const wsApi = {
   connectChat: (threadId?: string): WebSocket => {
     return new WebSocket(getChatWebSocketUrl(threadId))
   }
+}
+
+// ---------------------------------------------------------------------------
+// Workflow API
+// ---------------------------------------------------------------------------
+
+export interface WorkflowStepSummary {
+  name: string
+  label: string
+  skill: string
+  when?: string | null
+}
+
+export interface WorkflowTemplateSummary {
+  name: string
+  description: string
+  version: string
+  step_count: number
+  steps: WorkflowStepSummary[]
+  plugin_dir: string
+  has_chat_intent: boolean
+  has_webhook: boolean
+}
+
+export interface WorkflowTemplateDetail extends WorkflowTemplateSummary {
+  files: Record<string, string | null>
+  on_complete?: {
+    message: string
+    notification?: { title?: string; body?: string; level?: string }
+  }
+}
+
+export interface CollabTemplate {
+  id: string
+  title: string
+  description: string
+  steps: Array<{ name: string; label: string; skill: string }>
+  default_plugin_name: string
+  category: string
+}
+
+export interface WorkflowRunSummary {
+  run_id: string
+  template_name: string
+  ticket_id?: string | null
+  source?: string | null
+  status: string
+  current_step_index: number
+  error_message?: string | null
+  created_at?: string | null
+  completed_at?: string | null
+}
+
+export interface WorkflowStepDetail {
+  step_index: number
+  step_name: string
+  skill_name: string
+  status: string
+  celery_task_id?: string | null
+  output_artifacts?: Record<string, unknown> | null
+  error_message?: string | null
+}
+
+export interface WorkflowRunDetail {
+  run_id: string
+  template_name: string
+  ticket_id?: string | null
+  source?: string | null
+  status: string
+  current_step_index: number
+  error_message?: string | null
+  context?: Record<string, unknown> | null
+  steps: WorkflowStepDetail[]
+  created_at?: string | null
+  completed_at?: string | null
+}
+
+export interface ValidationResult {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+}
+
+export interface ChatIntentPreviewResult {
+  matched: boolean
+  reason?: string
+  workflow?: string
+  ticket_id?: string | null
+  active_steps?: string
+  description?: string
+}
+
+export const workflowApi = {
+  listTemplates: async (): Promise<WorkflowTemplateSummary[]> => {
+    const response = await api.get<WorkflowTemplateSummary[]>('/workflows/templates/')
+    return response.data
+  },
+  getTemplate: async (name: string): Promise<WorkflowTemplateDetail> => {
+    const response = await api.get<WorkflowTemplateDetail>(`/workflows/templates/${name}/`)
+    return response.data
+  },
+  reload: async () => {
+    const response = await api.post('/workflows/reload/')
+    return response.data
+  },
+  validate: async (data: { workflow_yaml: string; chat_intent_yaml?: string }): Promise<ValidationResult> => {
+    const response = await api.post<ValidationResult>('/workflows/validate/', data)
+    return response.data
+  },
+  saveTemplate: async (data: { name: string; category: string; files: Record<string, string> }) => {
+    const response = await api.post('/workflows/templates/', data)
+    return response.data
+  },
+  updateTemplate: async (name: string, data: { name: string; category: string; files: Record<string, string> }) => {
+    const response = await api.put(`/workflows/templates/${name}/`, data)
+    return response.data
+  },
+  listCollabTemplates: async (): Promise<CollabTemplate[]> => {
+    const response = await api.get<CollabTemplate[]>('/workflows/collab-templates/')
+    return response.data
+  },
+  generateFromCollabTemplate: async (data: {
+    template_id: string
+    plugin_name?: string
+    step1_skill?: string
+    step2_skill?: string
+    description?: string
+  }) => {
+    const response = await api.post<{ files: Record<string, string> }>('/workflows/collab-templates/generate/', data)
+    return response.data
+  },
+  previewChatIntent: async (data: {
+    query: string
+    workflow_name?: string
+    chat_intent_yaml?: string
+    context?: Record<string, unknown>
+  }): Promise<ChatIntentPreviewResult> => {
+    const response = await api.post<ChatIntentPreviewResult>('/workflows/chat-intent/preview/', data)
+    return response.data
+  },
+  listRuns: async (params?: { limit?: number; template_name?: string; ticket_id?: string }): Promise<WorkflowRunSummary[]> => {
+    const response = await api.get<WorkflowRunSummary[]>('/workflows/runs/', { params })
+    return response.data
+  },
+  getRun: async (runId: string): Promise<WorkflowRunDetail> => {
+    const response = await api.get<WorkflowRunDetail>(`/workflows/${runId}/`)
+    return response.data
+  },
+  testRun: async (data: { template_name: string; context: Record<string, unknown> }) => {
+    const response = await api.post('/workflows/runs/test/', data)
+    return response.data
+  },
 }

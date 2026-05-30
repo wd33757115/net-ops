@@ -6,46 +6,47 @@ import logging
 
 from src.core.celery_tasks.celery_app import celery
 from src.core.workflows.engine import WorkflowEngine
-from src.core.workflows.repository import list_workflow_steps, mark_step_failed
+from src.core.workflows.registry import find_step_template, get_template
+from src.core.workflows.repository import get_workflow_run, list_workflow_steps, mark_step_failed
 
 logger = logging.getLogger(__name__)
 
 
-def _get_celery_task(task_name: str):
-    from src.core.celery_tasks import tasks as task_module
+@celery.task(bind=True, name="execute_skill_task")
+def execute_skill_task(self, skill_name: str, **params):
+    """通用 Skill 执行 Celery 任务。"""
+    from src.core.skills.executor import SkillExecutionError, execute_skill
 
-    return getattr(task_module, task_name, None)
+    try:
+        return execute_skill(skill_name, params)
+    except SkillExecutionError as exc:
+        return {"success": False, "message": str(exc), "error": str(exc)}
 
 
 @celery.task(bind=True, name="dispatch_workflow_step_task")
 def dispatch_workflow_step_task(self, run_id: str, step_index: int):
-    """调度 Workflow 单步 Celery 子任务。"""
-    from src.core.workflows.templates import TEMPLATES
-    from src.core.workflows.repository import get_workflow_run
-
+    """调度 Workflow 单步 Skill（通过 execute_skill_task）。"""
     run = get_workflow_run(run_id)
     if not run:
         return {"success": False, "error": "workflow run not found"}
 
-    template = TEMPLATES.get(run.template_name)
+    template = get_template(run.template_name)
     steps = list_workflow_steps(run_id)
     if not template or step_index >= len(steps):
         return {"success": False, "error": "invalid step"}
 
-    step_tpl = template.steps[step_index]
+    step_rec = steps[step_index]
+    step_tpl = find_step_template(template, step_rec.step_name)
+    if not step_tpl:
+        return {"success": False, "error": f"unknown step: {step_rec.step_name}"}
     params = WorkflowEngine.build_step_params(run_id, step_index)
-    task_func = _get_celery_task(step_tpl.celery_task)
-    if not task_func:
-        mark_step_failed(steps[step_index].id, f"任务未注册: {step_tpl.celery_task}")
-        WorkflowEngine.handle_step_complete(run_id, step_index, {"success": False, "error": "task not found"})
-        return {"success": False}
 
     try:
-        # 在 Worker 任务内直接调用 run()，避免 apply/asyncResult.get 触发 Celery 死锁检测
-        result = task_func.run(**params)
+        result = execute_skill_task.run(skill_name=step_tpl.skill_name, **params)
         WorkflowEngine.handle_step_complete(run_id, step_index, result)
         return result
     except Exception as exc:
-        logger.exception("Workflow 步骤执行异常 run=%s step=%s", run_id, step_index)
+        logger.exception("Workflow 步骤执行异常 run=%s step=%s skill=%s", run_id, step_index, step_tpl.skill_name)
+        mark_step_failed(step_rec.id, str(exc))
         WorkflowEngine.handle_step_complete(run_id, step_index, {"success": False, "error": str(exc)})
         raise

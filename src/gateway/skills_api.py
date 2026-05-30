@@ -1,6 +1,9 @@
 """Skills 管理 API 路由。"""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
 
 from src.gateway.schemas import (
     CreateSkillRequest,
@@ -12,6 +15,10 @@ from src.gateway.schemas import (
 from src.skills.skill_manager import get_skill_manager
 
 router = APIRouter(prefix="/api/v1/skills", tags=["Skills"])
+
+
+class SkillTestRunRequest(BaseModel):
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 def _manager():
@@ -81,6 +88,19 @@ async def toggle_skill(skill_name: str, request: SkillToggleRequest):
 @router.post("/{skill_name}/reload")
 async def reload_skill(skill_name: str):
     return _ensure_success(_manager().reload_skill(skill_name))
+
+
+@router.post("/{skill_name}/test-run")
+async def test_run_skill(skill_name: str, request: SkillTestRunRequest = SkillTestRunRequest()):
+    """同步试跑 Skill（用于向导内测试）。"""
+    from src.core.skills.executor import SkillExecutionError, execute_skill
+
+    params = request.params
+    try:
+        result = execute_skill(skill_name, params)
+    except SkillExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": result.get("success", True), "result": result}
 
 
 @router.post("/reload-all")

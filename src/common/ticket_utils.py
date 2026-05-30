@@ -18,8 +18,11 @@ def extract_ticket_id(query: str) -> str | None:
 
     patterns = [
         r"工单号[：:\s]*([A-Za-z0-9_-]+)",
+        r"根据工单\s*([A-Za-z0-9_-]+)",
         r"工单\s*[Ii[Dd][：:\s]*([A-Za-z0-9_-]+)",
+        r"工单\s*([A-Za-z0-9_-]+)",
         r"ticket[_\s-]?id[：:\s]*([A-Za-z0-9_-]+)",
+        r"\b((?:REQ|CHG|INC|TK|WO)[-_]?\d+)\b",
     ]
     for pattern in patterns:
         match = re.search(pattern, query, re.IGNORECASE)

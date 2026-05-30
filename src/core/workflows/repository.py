@@ -189,3 +189,32 @@ def count_unread_notifications(user_id: str) -> int:
             .filter(Notification.user_id == str(user_id), Notification.read_at.is_(None))
             .count()
         )
+
+
+def clear_notifications(user_id: str) -> int:
+    """删除用户全部站内通知，返回清除条数。"""
+    with get_db_session() as db:
+        return (
+            db.query(Notification)
+            .filter(Notification.user_id == str(user_id))
+            .delete(synchronize_session=False)
+        )
+
+
+def list_workflow_runs(
+    *,
+    limit: int = 50,
+    template_name: str | None = None,
+    ticket_id: str | None = None,
+) -> list[WorkflowRun]:
+    """列出最近的 Workflow 运行实例。"""
+    with get_db_session() as db:
+        q = db.query(WorkflowRun).order_by(WorkflowRun.created_at.desc())
+        if template_name:
+            q = q.filter(WorkflowRun.template_name == template_name)
+        if ticket_id:
+            q = q.filter(WorkflowRun.ticket_id == ticket_id)
+        runs = q.limit(max(1, min(limit, 200))).all()
+        for r in runs:
+            db.expunge(r)
+        return runs

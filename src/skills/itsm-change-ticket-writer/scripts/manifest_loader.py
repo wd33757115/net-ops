@@ -1,53 +1,37 @@
-"""ZIP / manifest 解析。"""
+"""从本地 manifest.json 或策略 ZIP 解析结构化数据（Skill 内聚，不依赖 MinIO/平台）。"""
 
 from __future__ import annotations
 
 import io
 import json
 import os
-import tempfile
 import zipfile
 from typing import Any
-
-import requests
-
-from src.infrastructure.storage.minio_client import get_minio_storage
 
 
 def load_manifest(
     *,
     manifest: dict[str, Any] | None = None,
-    file_key: str | None = None,
-    zip_url: str | None = None,
+    manifest_path: str | None = None,
+    zip_path: str | None = None,
 ) -> dict[str, Any]:
     if manifest:
         return manifest
+    if manifest_path and os.path.isfile(manifest_path):
+        with open(manifest_path, encoding="utf-8") as f:
+            return json.load(f)
+    if zip_path and os.path.isfile(zip_path):
+        with open(zip_path, "rb") as f:
+            return _manifest_from_zip_bytes(f.read())
+    raise ValueError("无法加载 manifest：请提供 --manifest、--params 中的 manifest 或 --zip")
 
-    zip_bytes = _load_zip_bytes(file_key=file_key, zip_url=zip_url)
-    if not zip_bytes:
-        raise ValueError("无法加载策略 ZIP：缺少 manifest、file_key 或 zip_url")
 
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+def _manifest_from_zip_bytes(data: bytes) -> dict[str, Any]:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
         if "manifest.json" in zf.namelist():
             with zf.open("manifest.json") as mf:
                 return json.loads(mf.read().decode("utf-8"))
         return _manifest_from_zip_entries(zf)
-
-
-def _load_zip_bytes(*, file_key: str | None, zip_url: str | None) -> bytes | None:
-    if file_key:
-        data = get_minio_storage().download_file(file_key)
-        if data:
-            return data
-    if zip_url:
-        if zip_url.startswith(("http://", "https://")):
-            resp = requests.get(zip_url, timeout=120)
-            resp.raise_for_status()
-            return resp.content
-        if os.path.exists(zip_url):
-            with open(zip_url, "rb") as f:
-                return f.read()
-    return None
 
 
 def _manifest_from_zip_entries(zf: zipfile.ZipFile) -> dict[str, Any]:

@@ -1176,6 +1176,46 @@ body {
   font-size: 13px;
 }
 
+.grok-skills-tabs .ant-tabs-nav {
+  margin-bottom: 16px;
+}
+
+.grok-page-toolbar-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.grok-skill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.grok-wizard-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.grok-wizard-card {
+  width: min(920px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  border-radius: 12px !important;
+}
+
+.grok-wizard-panel {
+  padding: 4px 0;
+}
+
 .grok-content-inner .ant-switch-checked {
   background: #374151 !important;
 }
@@ -1782,6 +1822,31 @@ body {
 .grok-notification-bell:hover {
   background: #f0f0f0;
   color: #374151;
+}
+
+.grok-notification-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.grok-notification-clear:hover:not(:disabled) {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.grok-notification-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .grok-notification-loading {

@@ -10,6 +10,8 @@ tags:
 - network
 - security
 author: NetOps Team
+entry_script: scripts/run.py
+entry_output: dir
 triggers:
 - 生成防火墙策略
 - 防火墙配置

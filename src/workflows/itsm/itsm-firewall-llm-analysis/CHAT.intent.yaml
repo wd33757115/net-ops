@@ -1,0 +1,35 @@
+workflow: itsm-firewall-llm-analysis
+priority: 90
+description: 聊天触发防火墙变更 + LLM 结果分析（模式 A）
+
+match:
+  require_any:
+    - 防火墙
+    - 策略
+  require_any_secondary:
+    - LLM
+    - 分析
+    - 结果分析
+    - 变更工单
+
+auto_if_source:
+  - itsm_webhook
+
+context_from_state:
+  ticket_title: ticket_title
+  policy_file_url: uploaded_file_path
+  analysis_prompt: analysis_prompt
+
+context_defaults:
+  ticket_title: 防火墙策略变更
+  change_purpose: 根据用户请求生成防火墙策略、编写变更工单并进行 LLM 分析
+  analysis_focus: summary
+
+response_template: |
+  [OK] 已启动防火墙变更 + LLM 分析流程
+
+  - **流程 ID**: `{run_id}`
+  - **工单**: {ticket_id}
+  - **步骤**: {workflow_description}
+
+  流程在后台执行，完成后将收到站内通知。

@@ -1,0 +1,38 @@
+workflow: itsm-firewall-change
+priority: 100
+description: 聊天触发 ITSM 防火墙变更全流程
+
+match:
+  require_any:
+    - 防火墙
+    - 策略
+  require_any_secondary:
+    - 变更工单
+    - 编写变更
+    - itsm
+    - 提交变更
+    - 回调
+    - 变更流程
+    - 开通
+
+auto_if_source:
+  - itsm_webhook
+
+context_from_state:
+  ticket_title: ticket_title
+  policy_file_url: uploaded_file_path
+  callback_url: callback_url
+  callback_headers: callback_headers
+
+context_defaults:
+  ticket_title: 防火墙策略变更
+  change_purpose: 根据用户请求生成防火墙策略并编写变更工单
+
+response_template: |
+  [OK] 已启动 ITSM 防火墙变更流程
+
+  - **流程 ID**: `{run_id}`
+  - **工单**: {ticket_id}
+  - **步骤**: {workflow_description}
+
+  流程在后台执行，可通过 `GET /api/v1/workflows/{run_id}` 查询进度；完成后将收到站内通知。

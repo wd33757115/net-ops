@@ -1,0 +1,303 @@
+"""通用 Skill 执行器：subprocess + 平台 IO（MinIO/URL 下载上传）。"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import requests
+
+from src.core.skills.resolver import get_entry_output_mode, get_skill_cwd, resolve_entry_script
+from src.core.workflows.artifacts import make_file_artifact
+from src.infrastructure.storage.minio_client import get_minio_storage
+
+logger = logging.getLogger(__name__)
+
+# 仍走 in-process 的遗留 Skill（设备类等）
+_LEGACY_TASK_NAMES: dict[str, str] = {
+    "device-backup": "execute_config_backup_task",
+    "device-patrol": "execute_device_patrol_task",
+}
+
+
+# 通过 CLI --zip 接收 MinIO 策略包的 Skill
+_ZIP_CLI_SKILLS = frozenset({"itsm-change-ticket-writer"})
+
+
+class SkillExecutionError(RuntimeError):
+    pass
+
+
+def _download_url_to_path(url: str, dest: Path) -> None:
+    if url.startswith(("http://", "https://")):
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        dest.write_bytes(resp.content)
+    elif url.startswith("file://"):
+        src = url[7:]
+        shutil.copy(src, dest)
+    elif os.path.exists(url):
+        shutil.copy(url, dest)
+    else:
+        raise FileNotFoundError(f"无法下载文件: {url}")
+
+
+def _prepare_local_inputs(skill_name: str, params: dict[str, Any], tmpdir: str) -> dict[str, Any]:
+    prepared = dict(params)
+    minio = get_minio_storage()
+
+    if (
+        prepared.get("config_file_key")
+        and skill_name in _ZIP_CLI_SKILLS
+        and minio
+        and minio.is_ready()
+    ):
+        data = minio.download_file(str(prepared["config_file_key"]))
+        if data:
+            zip_path = os.path.join(tmpdir, "input_policy.zip")
+            with open(zip_path, "wb") as f:
+                f.write(data)
+            prepared["_zip_path"] = zip_path
+
+    policy_url = prepared.get("policy_file_url")
+    if policy_url and not prepared.get("_policy_path"):
+        policy_path = os.path.join(tmpdir, "policy_input.xlsx")
+        _download_url_to_path(str(policy_url), Path(policy_path))
+        prepared["_policy_path"] = policy_path
+        prepared["policy_file_url"] = policy_path
+
+    topo = prepared.get("topology_file_url")
+    if topo and topo.startswith(("http://", "https://", "file://")) or (topo and os.path.exists(str(topo))):
+        topo_path = os.path.join(tmpdir, "topology.json")
+        try:
+            _download_url_to_path(str(topo), Path(topo_path))
+            prepared["topology_file_url"] = topo_path
+        except Exception:
+            pass
+
+    return prepared
+
+
+def _parse_skill_stdout(stdout: str) -> dict[str, Any]:
+    text = (stdout or "").strip()
+    if not text:
+        return {"success": False, "error": "Skill 无输出"}
+    line = text.splitlines()[-1].strip()
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return {"success": False, "error": f"Skill 输出非 JSON: {line[:200]}"}
+
+
+def _run_subprocess_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
+    script = resolve_entry_script(skill_name)
+    if not script:
+        raise SkillExecutionError(f"Skill 无入口脚本: {skill_name}")
+
+    output_mode = get_entry_output_mode(skill_name)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        prepared = _prepare_local_inputs(skill_name, params, tmpdir)
+        params_path = os.path.join(tmpdir, "params.json")
+        with open(params_path, "w", encoding="utf-8") as f:
+            json.dump({k: v for k, v in prepared.items() if not k.startswith("_")}, f, ensure_ascii=False, default=str)
+
+        cmd = [sys.executable, str(script), "--params", params_path]
+        output_path = os.path.join(tmpdir, "output.xlsx")
+        output_dir = os.path.join(tmpdir, "output")
+
+        if output_mode == "dir":
+            os.makedirs(output_dir, exist_ok=True)
+            cmd.extend(["--output-dir", output_dir])
+        elif output_mode == "file":
+            cmd.extend(["-o", output_path])
+        elif output_mode == "none":
+            pass
+
+        zip_path = prepared.get("_zip_path")
+        if zip_path and skill_name in _ZIP_CLI_SKILLS:
+            cmd.extend(["--zip", zip_path])
+        policy_path = prepared.get("_policy_path")
+        if policy_path and skill_name == "firewall-policy-generator":
+            cmd.extend(["--policy", policy_path])
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=str(get_skill_cwd(skill_name)),
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise SkillExecutionError(f"Skill 脚本失败 ({skill_name}): {detail}")
+
+        skill_result = _parse_skill_stdout(result.stdout)
+        if not skill_result.get("success", True) and skill_result.get("error"):
+            return skill_result
+
+        local_zip = skill_result.pop("_local_zip", None)
+        if local_zip and os.path.isfile(str(local_zip)):
+            skill_result = _upload_zip_from_path(skill_result, str(local_zip), params, skill_name)
+
+        if output_mode == "file" and os.path.isfile(output_path) and not skill_result.get("artifacts"):
+            skill_result = _upload_file_output(skill_result, output_path, params, skill_name)
+
+        if output_mode == "dir" and os.path.isdir(output_dir):
+            skill_result = _upload_dir_output(skill_result, output_dir, params, skill_name, prepared)
+
+        return skill_result
+
+
+def _upload_zip_from_path(
+    skill_result: dict[str, Any],
+    zip_path: str,
+    params: dict[str, Any],
+    skill_name: str,
+) -> dict[str, Any]:
+    ticket_id = params.get("ticket_id") or "draft"
+    filename = os.path.basename(zip_path)
+    minio = get_minio_storage()
+    object_name = None
+    download_url = None
+    if minio and minio.is_ready():
+        object_name = f"firewall_policies/{ticket_id}/{filename}"
+        with open(zip_path, "rb") as f:
+            if minio.upload_file(object_name, f, content_type="application/zip"):
+                download_url = minio.get_presigned_url(object_name, expires=3600 * 24 * 7)
+    art = make_file_artifact(
+        file_key=object_name,
+        download_url=download_url,
+        filename=filename,
+        content_type="application/zip",
+    )
+    skill_result.setdefault("artifacts", {})["config_zip"] = art
+    if skill_result.get("manifest"):
+        skill_result["artifacts"]["manifest"] = skill_result["manifest"]
+    skill_result.setdefault("config_file_key", object_name)
+    skill_result.setdefault("download_url", download_url)
+    skill_result.setdefault("filename", filename)
+    return skill_result
+
+
+def _upload_file_output(
+    skill_result: dict[str, Any],
+    file_path: str,
+    params: dict[str, Any],
+    skill_name: str,
+) -> dict[str, Any]:
+    ticket_id = params.get("ticket_id") or "draft"
+    filename = os.path.basename(file_path)
+    minio = get_minio_storage()
+    object_name = None
+    download_url = None
+    if minio and minio.is_ready():
+        if skill_name == "llm-result-analyzer":
+            object_name = f"analysis_reports/{ticket_id}/{filename}"
+            content_type = "text/markdown; charset=utf-8"
+        else:
+            object_name = f"change_tickets/{ticket_id}/{filename}"
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        with open(file_path, "rb") as f:
+            if minio.upload_file(object_name, f.read(), content_type=content_type):
+                download_url = minio.get_presigned_url(object_name, expires=3600 * 24 * 7)
+    art = make_file_artifact(
+        file_key=object_name,
+        download_url=download_url,
+        filename=filename,
+        content_type=content_type if minio and minio.is_ready() else "application/octet-stream",
+    )
+    artifact_key = "analysis_report" if skill_name == "llm-result-analyzer" else "change_excel"
+    skill_result.setdefault("artifacts", {})[artifact_key] = art
+    if artifact_key == "change_excel":
+        skill_result.setdefault("change_excel_url", download_url)
+    skill_result.setdefault("download_url", download_url)
+    return skill_result
+
+
+def _upload_dir_output(
+    skill_result: dict[str, Any],
+    output_dir: str,
+    params: dict[str, Any],
+    skill_name: str,
+    prepared: dict[str, Any],
+) -> dict[str, Any]:
+    if skill_result.get("artifacts"):
+        return skill_result
+
+    import zipfile
+
+    ticket_id = params.get("ticket_id") or f"SKILL_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    zip_name = f"{skill_name.replace('-', '_')}_{ticket_id}.zip"
+    zip_path = os.path.join(os.path.dirname(output_dir), zip_name)
+    shutil.make_archive(zip_path.replace(".zip", ""), "zip", output_dir)
+
+    minio = get_minio_storage()
+    object_name = None
+    download_url = None
+    if minio and minio.is_ready():
+        object_name = f"skill_outputs/{skill_name}/{ticket_id}/{zip_name}"
+        with open(zip_path, "rb") as f:
+            if minio.upload_file(object_name, f, content_type="application/zip"):
+                download_url = minio.get_presigned_url(object_name, expires=3600 * 24 * 7)
+
+    art = make_file_artifact(file_key=object_name, download_url=download_url, filename=zip_name, content_type="application/zip")
+    skill_result.setdefault("artifacts", {})["config_zip"] = art
+    skill_result.setdefault("download_url", download_url)
+    skill_result.setdefault("config_file_key", object_name)
+    return skill_result
+
+
+def _run_legacy_task(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
+    task_name = _LEGACY_TASK_NAMES.get(skill_name)
+    if not task_name:
+        meta_task = None
+        from src.core.skills.resolver import _load_frontmatter
+
+        meta_task = _load_frontmatter(skill_name).get("celery_task")
+        task_name = meta_task
+
+    if not task_name:
+        raise SkillExecutionError(f"未找到 Skill 执行方式: {skill_name}")
+
+    from src.core.celery_tasks import tasks as task_module
+
+    task_func = getattr(task_module, task_name, None)
+    if not task_func:
+        raise SkillExecutionError(f"Celery 任务未注册: {task_name}")
+    return task_func.run(**params)
+
+
+def execute_skill(skill_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """统一 Skill 执行入口。"""
+    params = dict(params or {})
+    script = resolve_entry_script(skill_name)
+
+    if script and script.name in (
+        "run.py",
+        "itsm_change_ticket_excel.py",
+        "itsm_callback.py",
+        "generate_change_ticket.py",
+    ):
+        try:
+            return _run_subprocess_skill(skill_name, params)
+        except SkillExecutionError:
+            raise
+        except Exception as exc:
+            logger.exception("Skill subprocess 异常 skill=%s", skill_name)
+            if skill_name in _LEGACY_TASK_NAMES:
+                logger.warning("回退 legacy task: %s", skill_name)
+                return _run_legacy_task(skill_name, params)
+            raise SkillExecutionError(str(exc)) from exc
+
+    if skill_name in _LEGACY_TASK_NAMES or not script:
+        return _run_legacy_task(skill_name, params)
+
+    return _run_subprocess_skill(skill_name, params)

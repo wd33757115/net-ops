@@ -31,6 +31,19 @@ async def proxy_notifications_list(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_jwt
 @sync_bff_view
+async def proxy_notifications_clear(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/notifications/clear",
+        request_id=request.bff_request_id,
+        timeout=TASK_TIMEOUT,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
 async def proxy_notification_read(request: HttpRequest, notification_id: str) -> JsonResponse:
     return await proxy_to_fastapi(
         method="POST",

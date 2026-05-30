@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.core.workflows.events import publish_workflow_event
 from src.core.workflows.artifacts import normalize_step_result
+from src.core.workflows.events import publish_workflow_event
+from src.core.workflows.expression import build_step_env, resolve_inputs, resolve_value
+from src.core.workflows.registry import TEMPLATES, get_template, load_workflows, resolve_active_steps
 from src.core.workflows.repository import (
     create_notification,
     create_workflow_run,
@@ -14,12 +16,10 @@ from src.core.workflows.repository import (
     get_workflow_run,
     list_workflow_steps,
     mark_step_completed,
-    mark_step_failed,
     mark_step_running,
     update_run_status,
     update_run_step_index,
 )
-from src.core.workflows.templates import TEMPLATES, WorkflowTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,8 @@ class WorkflowEngine:
         user_id: str | None = None,
         thread_id: str | None = None,
     ) -> str:
-        template = TEMPLATES.get(template_name)
+        load_workflows()
+        template = get_template(template_name)
         if not template:
             raise ValueError(f"未知 Workflow 模板: {template_name}")
 
@@ -48,9 +49,16 @@ class WorkflowEngine:
             user_id=user_id,
             thread_id=thread_id,
         )
+        active_tpl_steps = resolve_active_steps(template, context, run_id=run_id)
+        if not active_tpl_steps:
+            raise ValueError(f"Workflow {template_name} 无可用步骤")
         steps = [
-            {"name": s.name, "skill_name": s.skill_name, "celery_task": s.celery_task}
-            for s in template.steps
+            {
+                "name": s.name,
+                "skill_name": s.skill_name,
+                "celery_task": "execute_skill_task",
+            }
+            for s in active_tpl_steps
         ]
         create_workflow_steps(run_id, steps)
         update_run_status(run_id, "running")
@@ -82,9 +90,7 @@ class WorkflowEngine:
             status="running",
             message=f"正在执行: {step.skill_name}",
         )
-        async_result = dispatch_workflow_step_task.apply_async(
-            args=[run_id, step_index],
-        )
+        async_result = dispatch_workflow_step_task.apply_async(args=[run_id, step_index])
         mark_step_running(step.id, async_result.id)
 
     @classmethod
@@ -129,38 +135,61 @@ class WorkflowEngine:
         if not run:
             return
         update_run_status(run_id, "completed")
+        template = get_template(run.template_name)
         steps = list_workflow_steps(run_id)
         artifacts: dict[str, Any] = {}
         for s in steps:
             if s.output_artifacts:
                 artifacts.update(s.output_artifacts)
 
-        excel = artifacts.get("change_excel") or {}
-        zip_art = artifacts.get("config_zip") or {}
+        oc = template.on_complete if template else None
+        message = oc.message if oc else "Workflow 已完成"
+        env = build_step_env(
+            context=run.context or {},
+            run_id=run_id,
+            ticket_id=run.ticket_id,
+            step_records=steps,
+            current_step_index=len(steps),
+        )
         publish_workflow_event(
             run_id,
             status="completed",
-            message="ITSM 变更流程已完成",
-            extra={"change_excel_url": excel.get("download_url"), "config_zip_url": zip_art.get("download_url")},
+            message=message,
+            extra={
+                "change_excel_url": (artifacts.get("change_excel") or {}).get("download_url"),
+                "config_zip_url": (artifacts.get("config_zip") or {}).get("download_url"),
+            },
         )
-        cls._notify_success(run_id, excel.get("download_url"), zip_art.get("download_url"))
+        cls._notify_success(run_id, template, env, artifacts)
 
     @classmethod
-    def _notify_success(cls, run_id: str, excel_url: str | None, zip_url: str | None) -> None:
+    def _notify_success(
+        cls,
+        run_id: str,
+        template,
+        env: dict[str, Any],
+        artifacts: dict[str, Any],
+    ) -> None:
         run = get_workflow_run(run_id)
         if not run or not run.user_id:
             return
-        body = "防火墙策略与变更工单已生成。"
-        if excel_url:
-            body += f"\n变更工单: {excel_url}"
+        oc = template.on_complete if template else None
+        excel = artifacts.get("change_excel") or {}
+        zip_art = artifacts.get("config_zip") or {}
+        title_tpl = oc.notification_title if oc else "Workflow 已完成 (${context.ticket_id})"
+        body_tpl = oc.notification_body if oc else "流程已完成。"
+        title = str(resolve_value(title_tpl, env) if title_tpl else "Workflow 已完成")
+        body = str(resolve_value(body_tpl, env) if body_tpl else "流程已完成。")
+        if excel.get("download_url"):
+            body += f"\n变更工单: {excel['download_url']}"
         create_notification(
             user_id=run.user_id,
-            title=f"变更工单已完成 ({run.ticket_id or run_id[:8]})",
+            title=title,
             body=body,
             workflow_run_id=run_id,
             thread_id=run.thread_id,
-            payload={"change_excel_url": excel_url, "config_zip_url": zip_url},
-            level="success",
+            payload={"change_excel_url": excel.get("download_url"), "config_zip_url": zip_art.get("download_url")},
+            level=(oc.notification_level if oc else "success"),
         )
 
     @classmethod
@@ -170,7 +199,7 @@ class WorkflowEngine:
             return
         create_notification(
             user_id=run.user_id,
-            title=f"变更流程失败 ({run.ticket_id or run_id[:8]})",
+            title=f"Workflow 失败 ({run.ticket_id or run_id[:8]})",
             body=error,
             workflow_run_id=run_id,
             thread_id=run.thread_id,
@@ -182,70 +211,27 @@ class WorkflowEngine:
         run = get_workflow_run(run_id)
         if not run:
             return {}
-        ctx = dict(run.context or {})
-        ctx["workflow_run_id"] = run_id
+        template = get_template(run.template_name)
+        if not template or step_index >= len(template.steps):
+            return dict(run.context or {})
+
         steps = list_workflow_steps(run_id)
-        step = steps[step_index]
-        template = TEMPLATES.get(run.template_name)
-        if not template:
-            return ctx
+        if step_index >= len(steps):
+            return dict(run.context or {})
 
-        step_tpl = template.steps[step_index]
-        if step_tpl.skill_name == "firewall-policy-generator":
-            return {
-                "ticket_id": ctx.get("ticket_id"),
-                "ticket_title": ctx.get("ticket_title", "防火墙策略生成"),
-                "policy_file_url": ctx.get("policy_file_url"),
-                "topology_file_url": ctx.get("topology_file_url"),
-                "requester": ctx.get("requester", ""),
-                "assignee": ctx.get("assignee", ""),
-                "priority": ctx.get("priority", "P2"),
-                "parameters": ctx.get("parameters"),
-                "change_background": ctx.get("change_background", ""),
-                "change_purpose": ctx.get("change_purpose", ""),
-                "requester_dept": ctx.get("requester_dept", ""),
-                "due_date": ctx.get("due_date"),
-                "workflow_run_id": run_id,
-            }
+        step_rec = steps[step_index]
+        from src.core.workflows.registry import find_step_template
 
-        prev_artifacts: dict[str, Any] = {}
-        prev_manifest = None
-        for i in range(step_index):
-            prev = steps[i]
-            if prev.output_artifacts:
-                prev_artifacts.update(prev.output_artifacts)
-            if prev.result and prev.result.get("manifest"):
-                prev_manifest = prev.result.get("manifest")
-
-        if step_tpl.skill_name == "itsm-change-ticket-writer":
-            zip_art = prev_artifacts.get("config_zip") or {}
-            return {
-                "ticket_id": ctx.get("ticket_id"),
-                "ticket_title": ctx.get("ticket_title", ""),
-                "change_background": ctx.get("change_background", ""),
-                "change_purpose": ctx.get("change_purpose", ""),
-                "requester": ctx.get("requester", ""),
-                "requester_dept": ctx.get("requester_dept", ""),
-                "priority": ctx.get("priority", "P2"),
-                "due_date": ctx.get("due_date"),
-                "config_file_key": zip_art.get("file_key"),
-                "config_files_url": zip_art.get("download_url"),
-                "manifest": prev_manifest or (prev_artifacts.get("manifest") if prev_artifacts else None),
-                "workflow_run_id": run_id,
-            }
-
-        if step_tpl.skill_name == "itsm-callback":
-            excel_art = prev_artifacts.get("change_excel") or {}
-            zip_art = prev_artifacts.get("config_zip") or {}
-            return {
-                "ticket_id": ctx.get("ticket_id"),
-                "callback_url": ctx.get("callback_url"),
-                "callback_headers": ctx.get("callback_headers"),
-                "change_excel_url": excel_art.get("download_url"),
-                "change_excel_file_key": excel_art.get("file_key"),
-                "config_files_url": zip_art.get("download_url"),
-                "config_file_key": zip_art.get("file_key"),
-                "workflow_run_id": run_id,
-            }
-
-        return ctx
+        step_tpl = find_step_template(template, step_rec.step_name)
+        if not step_tpl:
+            return dict(run.context or {})
+        env = build_step_env(
+            context=dict(run.context or {}),
+            run_id=run_id,
+            ticket_id=run.ticket_id,
+            step_records=steps,
+            current_step_index=step_index,
+        )
+        params = resolve_inputs(step_tpl.inputs, env)
+        params["workflow_run_id"] = run_id
+        return params

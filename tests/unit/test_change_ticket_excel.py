@@ -1,6 +1,12 @@
-"""变更工单 Excel 单元测试。"""
+"""变更工单 Excel 单元测试（Skill scripts）。"""
 
-from src.core.itsm.change_ticket_excel import build_change_ticket_workbook
+import sys
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parents[2] / "src" / "skills" / "itsm-change-ticket-writer" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+from change_ticket_excel import build_change_ticket_workbook  # noqa: E402
 
 
 def test_build_change_ticket_workbook_minimal():

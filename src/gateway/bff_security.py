@@ -49,9 +49,12 @@ def is_trusted_bff_request(headers: Mapping[str, str]) -> bool:
 
 def is_bff_bypass_path(path: str) -> bool:
     """在启用 BFF 校验时，是否允许该路径直连 FastAPI。"""
-    if allow_direct_itsm_access() and path in _ITSM_DIRECT_PATHS:
+    if not allow_direct_itsm_access():
+        return False
+    if path in _ITSM_DIRECT_PATHS:
         return True
-    return False
+    # 插件化 Webhook：/api/v1/itsm/webhook/{route_key}
+    return path.startswith("/api/v1/itsm/webhook/")
 
 
 def reject_message() -> dict:

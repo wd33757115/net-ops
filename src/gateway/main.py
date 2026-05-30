@@ -167,6 +167,19 @@ async def lifespan(app: FastAPI):
         print(f"[Lifespan] [WARN] RAG Service load failed: {e}")
         app.state.rag_service = None
 
+    # --- 启动：加载 Workflow / ITSM 插件包 ---
+    try:
+        from src.core.workflows.registry import load_workflows
+        from src.core.plugins.itsm_webhook import get_itsm_webhook_registry
+        from src.core.plugins.chat_intent import get_chat_intent_registry
+
+        wf_count = len(load_workflows(force=True))
+        get_itsm_webhook_registry().load(force=True)
+        intent_count = len(get_chat_intent_registry().all_intents())
+        print(f"[Lifespan] [OK] Workflow 插件: {wf_count} 个, Chat Intent: {intent_count} 个")
+    except Exception as e:
+        print(f"[Lifespan] [WARN] Workflow 插件加载失败: {e}")
+
     # --- 启动：统一加载 SKILL.md + SkillSystem + Registry ---
     try:
         from src.skills.bootstrap import bootstrap_skills
@@ -661,40 +674,41 @@ async def itsm_webhook_endpoint(event: ITSMEventRequest, background_tasks: Backg
     )
 
 
+@app.post("/api/v1/itsm/webhook/callback", tags=["ITSM"])
+async def itsm_callback_endpoint(request: dict):
+    """
+    ITSM 回调接收端点（模拟外部 ITSM 系统，供 E2E / 联调）
+
+    须在通配路由 /{route_key} 之前注册，避免 callback 被当作 workflow route_key。
+    """
+    print(f"[ITSM Callback] Received callback: {json.dumps(request, ensure_ascii=False)}")
+
+    response = {
+        "status": "success",
+        "message": "回调已接收",
+        "callback_id": request.get("callback_id"),
+        "source_ticket_id": request.get("source_ticket_id"),
+    }
+    return JSONResponse(status_code=status.HTTP_200_OK, content=response)
+
+
 @app.post("/api/v1/itsm/webhook/firewall-policy", tags=["ITSM"], response_model=ITSMWorkflowStartResponse)
 async def itsm_firewall_policy_webhook(request: ITSMFirewallPolicyRequest):
-    """
-    ITSM Webhook - 防火墙策略开通（完整 Workflow：策略 ZIP → 变更工单 Excel → ITSM 回调）
-    """
-    from src.core.workflows import ITSM_FIREWALL_CHANGE, WorkflowEngine
-    from src.gateway.itsm_workflow import build_itsm_workflow_context
+    """ITSM Webhook 兼容入口（转发至插件 route_key=firewall-policy）。"""
+    from src.gateway.itsm_webhook_handler import handle_itsm_webhook
 
-    try:
-        context = build_itsm_workflow_context(request)
-        run_id = WorkflowEngine.start(
-            ITSM_FIREWALL_CHANGE.name,
-            context,
-            source="itsm_webhook",
-        )
-        body = ITSMWorkflowStartResponse(
-            workflow_run_id=run_id,
-            ticket_id=request.ticket_id,
-            status="accepted",
-            message="ITSM 防火墙变更流程已启动（策略生成 → 变更工单 → 回调）",
-            query_endpoint=f"/api/v1/workflows/{run_id}",
-        )
-        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=body.model_dump())
-    except Exception as exc:
-        return JSONResponse(
-            status_code=status.HTTP_202_ACCEPTED,
-            content={
-                "workflow_run_id": str(uuid.uuid4()),
-                "ticket_id": request.ticket_id,
-                "status": "failed",
-                "message": f"Workflow 启动失败: {exc}",
-                "query_endpoint": "",
-            },
-        )
+    return await handle_itsm_webhook("firewall-policy", request.model_dump())
+
+
+@app.post("/api/v1/itsm/webhook/{route_key}", tags=["ITSM"], response_model=ITSMWorkflowStartResponse)
+async def itsm_webhook_by_route(route_key: str, request: Request):
+    """通用 ITSM Webhook（路由由 Workflow 插件包 ITSM.webhook.yaml 定义）。"""
+    if route_key in ("callback",):
+        raise HTTPException(status_code=404, detail=f"请使用专用端点: /api/v1/itsm/webhook/{route_key}")
+    body = await request.json()
+    from src.gateway.itsm_webhook_handler import handle_itsm_webhook
+
+    return await handle_itsm_webhook(route_key, body)
 
 
 @app.get("/api/v1/tasks/{task_id}", tags=["Tasks"], response_model=TaskResponse)
@@ -754,25 +768,6 @@ async def get_task_status(task_id: str):
             status="failed",
             error_message=str(e)
         )
-
-
-@app.post("/api/v1/itsm/webhook/callback", tags=["ITSM"])
-async def itsm_callback_endpoint(request: dict):
-    """
-    ITSM 回调端点（模拟接收 ITSM 回调）
-
-    - 接收防火墙策略生成任务的回调结果
-    - 记录回调内容用于调试
-    """
-    print(f"[ITSM Callback] Received callback: {json.dumps(request, ensure_ascii=False)}")
-
-    response = {
-        "status": "success",
-        "message": "回调已接收",
-        "callback_id": request.get("callback_id"),
-        "source_ticket_id": request.get("source_ticket_id")
-    }
-    return JSONResponse(status_code=status.HTTP_200_OK, content=response)
 
 
 @app.post("/api/v1/chat/upload", tags=["Chat"])

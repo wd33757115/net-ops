@@ -5,7 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from ..decorators import require_jwt, require_role
 from ..sync_async import sync_bff_view
-from ..proxy_client import proxy_to_fastapi
+from ..proxy_client import TASK_TIMEOUT, proxy_to_fastapi
 from ..views._helpers import forward_client_headers, parse_json_body
 
 logger = logging.getLogger("bff.views.skills")
@@ -127,6 +127,20 @@ async def proxy_skill_reload(request: HttpRequest, skill_name: str) -> JsonRespo
         method="POST",
         fastapi_path=f"/api/v1/skills/{skill_name}/reload",
         request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_skill_test_run(request: HttpRequest, skill_name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/skills/{skill_name}/test-run",
+        request_id=request.bff_request_id,
+        timeout=TASK_TIMEOUT,
+        data=parse_json_body(request),
         extra_headers=forward_client_headers(request),
     )
 

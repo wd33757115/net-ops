@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.auth.dependencies import get_optional_user
 from src.auth.models import CurrentUser
 from src.core.workflows.repository import (
+    clear_notifications,
     count_unread_notifications,
     list_notifications,
     mark_notification_read,
@@ -43,6 +44,16 @@ async def get_notifications(
             for n in items
         ],
     )
+
+
+@router.post("/clear")
+async def clear_all_notifications(
+    user: CurrentUser | None = Depends(get_optional_user),
+):
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录")
+    deleted = clear_notifications(user.user_id)
+    return {"ok": True, "deleted_count": deleted, "unread_count": 0}
 
 
 @router.post("/{notification_id}/read")
