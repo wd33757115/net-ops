@@ -552,6 +552,34 @@ class SkillManager:
             instructions = data.get("instructions", f"# {data.get('name', '')}\n\n{data.get('description', '')}")
             return f"---\n{yaml_str}---\n\n{instructions}\n"
 
+    def get_skill_schema(self, skill_name: str) -> dict[str, Any] | None:
+        """返回 Skill 的 I/O schema，供 Workflow Builder 参数面板使用。"""
+        skill_md = self._find_skill_md_path(skill_name)
+        if not skill_md:
+            return None
+
+        from src.skill_system.metadata import parse_skill_md
+
+        try:
+            metadata = parse_skill_md(skill_md, include_instructions=False)
+        except Exception as exc:
+            logger.warning("解析 Skill schema 失败 %s: %s", skill_name, exc)
+            return None
+
+        frontmatter = self._parse_skill_md_content(skill_md.read_text(encoding="utf-8"))
+        return {
+            "name": metadata.name,
+            "description": metadata.description,
+            "category": metadata.category,
+            "version": metadata.version,
+            "enabled": metadata.enabled,
+            "entry_script": frontmatter.get("entry_script"),
+            "entry_output": frontmatter.get("entry_output"),
+            "execution_mode": metadata.execution_mode,
+            "inputs": [inp.model_dump() for inp in metadata.inputs],
+            "outputs": [out.model_dump() for out in metadata.outputs],
+        }
+
 
 # 全局单例
 _skill_manager: SkillManager | None = None

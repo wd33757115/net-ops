@@ -36,6 +36,18 @@ async def proxy_workflow_templates(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_jwt
 @sync_bff_view
+async def proxy_workflow_template_dsl(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path=f"/api/v1/workflows/templates/{name}/dsl",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
 async def proxy_workflow_template_detail(request: HttpRequest, name: str) -> JsonResponse:
     headers = forward_client_headers(request)
     if request.method == "GET":
@@ -83,10 +95,49 @@ async def proxy_workflow_validate(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_jwt
 @sync_bff_view
-async def proxy_collab_templates(request: HttpRequest) -> JsonResponse:
+async def proxy_workflow_preview(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/workflows/preview",
+        request_id=request.bff_request_id,
+        data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_workflow_generate(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/workflows/generate",
+        request_id=request.bff_request_id,
+        data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_workflow_infer_mappings(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/workflows/infer-mappings",
+        request_id=request.bff_request_id,
+        data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_workflow_categories(request: HttpRequest) -> JsonResponse:
     return await proxy_to_fastapi(
         method="GET",
-        fastapi_path="/api/v1/workflows/collab-templates",
+        fastapi_path="/api/v1/workflows/categories",
         request_id=request.bff_request_id,
         extra_headers=forward_client_headers(request),
     )
@@ -95,10 +146,10 @@ async def proxy_collab_templates(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_jwt
 @sync_bff_view
-async def proxy_collab_template_generate(request: HttpRequest) -> JsonResponse:
+async def proxy_workflow_expression_hints_preview(request: HttpRequest) -> JsonResponse:
     return await proxy_to_fastapi(
         method="POST",
-        fastapi_path="/api/v1/workflows/collab-templates/generate",
+        fastapi_path="/api/v1/workflows/expression-hints/preview",
         request_id=request.bff_request_id,
         data=parse_json_body(request),
         extra_headers=forward_client_headers(request),
@@ -114,6 +165,186 @@ async def proxy_chat_intent_preview(request: HttpRequest) -> JsonResponse:
         fastapi_path="/api/v1/workflows/chat-intent/preview",
         request_id=request.bff_request_id,
         data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_workflow_dry_run(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/workflows/dry-run",
+        request_id=request.bff_request_id,
+        data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_chat_intent_suggest_nl(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/workflows/chat-intent/suggest-nl",
+        request_id=request.bff_request_id,
+        data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_workflow_plugins(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path="/api/v1/workflows/plugins",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_workflow_import(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/workflows/import",
+        request_id=request.bff_request_id,
+        data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_plugin_versions(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path=f"/api/v1/workflows/plugins/{name}/versions",
+        request_id=request.bff_request_id,
+        params=dict(request.GET.items()),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_plugin_version_diff(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path=f"/api/v1/workflows/plugins/{name}/versions/diff",
+        request_id=request.bff_request_id,
+        params=dict(request.GET.items()),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_plugin_export(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path=f"/api/v1/workflows/plugins/{name}/export",
+        request_id=request.bff_request_id,
+        params=dict(request.GET.items()),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_plugin_submit_review(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/workflows/plugins/{name}/submit-review",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@require_role("admin")
+@sync_bff_view
+async def proxy_plugin_publish(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/workflows/plugins/{name}/publish",
+        request_id=request.bff_request_id,
+        data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@require_role("admin")
+@sync_bff_view
+async def proxy_plugin_reject(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/workflows/plugins/{name}/reject",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@require_role("admin", "operator")
+@sync_bff_view
+async def proxy_plugin_delete(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="DELETE",
+        fastapi_path=f"/api/v1/workflows/plugins/{name}",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_plugin_publish_market(request: HttpRequest, name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/workflows/plugins/{name}/publish-to-market",
+        request_id=request.bff_request_id,
+        data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_market_templates(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path="/api/v1/workflows/market/templates",
+        request_id=request.bff_request_id,
+        params=dict(request.GET.items()),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_market_template_detail(request: HttpRequest, template_id: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path=f"/api/v1/workflows/market/templates/{template_id}",
+        request_id=request.bff_request_id,
         extra_headers=forward_client_headers(request),
     )
 
@@ -144,6 +375,33 @@ async def proxy_workflow_test_run(request: HttpRequest) -> JsonResponse:
         request_id=request.bff_request_id,
         timeout=TASK_TIMEOUT,
         data=parse_json_body(request),
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_workflow_timeline(request: HttpRequest, run_id: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path=f"/api/v1/workflows/{run_id}/timeline",
+        request_id=request.bff_request_id,
+        timeout=TASK_TIMEOUT,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_workflow_events_stream(request: HttpRequest, run_id: str):
+    from ..proxy_client import proxy_stream_to_fastapi
+
+    return await proxy_stream_to_fastapi(
+        method="GET",
+        fastapi_path=f"/api/v1/workflows/{run_id}/events/stream",
+        request_id=request.bff_request_id,
         extra_headers=forward_client_headers(request),
     )
 

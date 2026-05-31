@@ -158,6 +158,98 @@ def get_trace_url(trace_id: str | None) -> str | None:
     return f"{host}/trace/{trace_id}"
 
 
+@dataclass
+class LangfuseWorkflowTrace:
+    client: Any
+    trace: Any
+    step_spans: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def trace_id(self) -> str | None:
+        trace_id = getattr(self.trace, "id", None)
+        return str(trace_id) if trace_id else None
+
+
+def start_workflow_trace(
+    *,
+    run_id: str,
+    template_name: str,
+    ticket_id: str | None = None,
+    source: str = "chat",
+    user_id: str | None = None,
+    parent_run_id: str | None = None,
+) -> LangfuseWorkflowTrace | None:
+    """为 Workflow Run 创建 Langfuse trace。"""
+    client = get_langfuse_client()
+    if not client:
+        return None
+    metadata: dict[str, Any] = {
+        "run_id": run_id,
+        "template_name": template_name,
+        "source": source,
+    }
+    if parent_run_id:
+        metadata["parent_run_id"] = parent_run_id
+    try:
+        trace = client.trace(
+            name=f"workflow:{template_name}",
+            user_id=user_id,
+            session_id=run_id,
+            metadata=metadata,
+            input={"ticket_id": ticket_id, "template": template_name},
+            tags=["workflow", source],
+        )
+        return LangfuseWorkflowTrace(client=client, trace=trace)
+    except Exception as exc:
+        logger.warning("Langfuse workflow trace start failed: %s", exc)
+        return None
+
+
+def record_workflow_step(
+    wf_trace: LangfuseWorkflowTrace | None,
+    *,
+    step_name: str,
+    skill_name: str | None,
+    status: str,
+    message: str = "",
+    output: Any | None = None,
+) -> None:
+    if not wf_trace:
+        return
+    try:
+        span = wf_trace.trace.span(
+            name=f"step:{step_name}",
+            metadata={"skill": skill_name, "status": status, "message": message},
+            input={"step": step_name, "skill": skill_name},
+            output=output,
+        )
+        span.end()
+        wf_trace.step_spans[step_name] = span
+    except Exception as exc:
+        logger.debug("Langfuse workflow step span failed: %s", exc)
+
+
+def end_workflow_trace(
+    wf_trace: LangfuseWorkflowTrace | None,
+    *,
+    status: str,
+    message: str = "",
+    output: Any | None = None,
+) -> None:
+    if not wf_trace:
+        return
+    try:
+        level = "ERROR" if status == "failed" else "DEFAULT"
+        wf_trace.trace.update(
+            output=output or {"status": status, "message": message},
+            level=level,
+        )
+    except Exception as exc:
+        logger.warning("Langfuse workflow trace end failed: %s", exc)
+    finally:
+        flush_langfuse(wf_trace.client)
+
+
 def get_langfuse_handler(**kwargs: Any) -> LangfuseChatTrace | None:
     """兼容旧调用方：等价于 start_chat_trace。"""
     return start_chat_trace(**kwargs)

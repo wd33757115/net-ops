@@ -103,6 +103,15 @@ async def test_run_skill(skill_name: str, request: SkillTestRunRequest = SkillTe
     return {"success": result.get("success", True), "result": result}
 
 
+@router.get("/{skill_name}/schema")
+async def get_skill_schema(skill_name: str):
+    """返回 Skill I/O schema，供 Workflow Builder 参数配置。"""
+    schema = _manager().get_skill_schema(skill_name)
+    if schema is None:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' 不存在")
+    return schema
+
+
 @router.post("/reload-all")
 async def reload_all_skills():
     return _ensure_success(_manager().reload_all())

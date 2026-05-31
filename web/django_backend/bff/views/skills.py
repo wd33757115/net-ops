@@ -148,6 +148,18 @@ async def proxy_skill_test_run(request: HttpRequest, skill_name: str) -> JsonRes
 @csrf_exempt
 @require_jwt
 @sync_bff_view
+async def proxy_skill_schema(request: HttpRequest, skill_name: str) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path=f"/api/v1/skills/{skill_name}/schema",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
 async def proxy_skill_detail(request: HttpRequest, skill_name: str) -> JsonResponse:
     headers = forward_client_headers(request)
     path = f"/api/v1/skills/{skill_name}"

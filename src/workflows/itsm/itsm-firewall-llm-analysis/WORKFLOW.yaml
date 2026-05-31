@@ -52,6 +52,7 @@ steps:
 
 on_complete:
   message: 防火墙变更与 LLM 分析已完成
+  notify_each_step: true
   notification:
     title: "LLM 分析已完成 (${context.ticket_id})"
     body: "策略、变更工单与 LLM 分析报告已生成。"

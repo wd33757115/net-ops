@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react'
-import { Alert, Card, Collapse, Spin, Steps, Tag, Typography } from 'antd'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Alert, Card, List, Spin, Steps, Tag, Typography } from 'antd'
+import { LinkOutlined } from '@ant-design/icons'
 import { useQuery } from 'react-query'
-import { workflowApi, WorkflowRunDetail } from '../../services/api'
+import { workflowApi, WorkflowTimelineEvent } from '../../services/api'
 import { GrokChip } from '../ui/GrokUi'
 
-const { Text, Paragraph } = Typography
+const { Text } = Typography
 
 interface WorkflowRunMonitorProps {
   runId: string | null
@@ -12,32 +13,80 @@ interface WorkflowRunMonitorProps {
   embedded?: boolean
 }
 
-const statusColor: Record<string, string> = {
-  pending: 'default',
+const STATUS_COLOR: Record<string, string> = {
+  started: 'blue',
   running: 'processing',
   completed: 'success',
   failed: 'error',
 }
 
-const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({ runId, onClose, embedded }) => {
-  const [run, setRun] = useState<WorkflowRunDetail | null>(null)
+function formatTime(ts?: string) {
+  if (!ts) return ''
+  try {
+    return new Date(ts).toLocaleTimeString()
+  } catch {
+    return ts
+  }
+}
 
-  const { isLoading, refetch } = useQuery(
+const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({ runId, onClose, embedded }) => {
+  const [liveEvents, setLiveEvents] = useState<WorkflowTimelineEvent[]>([])
+
+  const { data: run, isLoading, refetch } = useQuery(
     ['workflow-run', runId],
     () => workflowApi.getRun(runId!),
-    {
-      enabled: !!runId,
-      refetchInterval: (data) => {
-        if (!data) return 3000
-        return data.status === 'completed' || data.status === 'failed' ? false : 3000
-      },
-      onSuccess: (data) => setRun(data),
-    }
+    { enabled: !!runId, refetchOnWindowFocus: false },
   )
 
+  const timeline = useMemo(() => {
+    const base = run?.timeline || []
+    const merged = [...base]
+    for (const ev of liveEvents) {
+      const key = `${ev.timestamp}-${ev.status}-${ev.step_name}-${ev.message}`
+      if (!merged.some((m) => `${m.timestamp}-${m.status}-${m.step_name}-${m.message}` === key)) {
+        merged.push(ev)
+      }
+    }
+    return merged.sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')))
+  }, [run?.timeline, liveEvents])
+
   useEffect(() => {
-    if (!runId) setRun(null)
-  }, [runId])
+    if (!runId || !run) return undefined
+    if (run.status === 'completed' || run.status === 'failed') return undefined
+
+    const timer = window.setInterval(() => {
+      refetch()
+    }, 2500)
+    return () => window.clearInterval(timer)
+  }, [runId, run?.status, refetch])
+
+  useEffect(() => {
+    if (!runId || !run) return undefined
+    if (run.status === 'completed' || run.status === 'failed') return undefined
+
+    const url = workflowApi.getRunEventsStreamUrl(runId)
+    const es = new EventSource(url, { withCredentials: true } as EventSourceInit)
+
+    const onTimeline = (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data) as WorkflowTimelineEvent
+        setLiveEvents((prev) => [...prev, payload])
+      } catch {
+        /* ignore */
+      }
+    }
+    const onDone = () => {
+      refetch()
+      es.close()
+    }
+
+    es.addEventListener('timeline', onTimeline)
+    es.addEventListener('progress', onTimeline)
+    es.addEventListener('done', onDone)
+    es.onerror = () => es.close()
+
+    return () => es.close()
+  }, [runId, run?.status, refetch])
 
   if (!runId) return null
 
@@ -53,9 +102,32 @@ const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({ runId, onClose,
             </GrokChip>
             <Tag>{run.template_name}</Tag>
             {run.ticket_id && <Tag color="blue">{run.ticket_id}</Tag>}
+            {run.langfuse_url && (
+              <a href={run.langfuse_url} target="_blank" rel="noreferrer">
+                <Tag icon={<LinkOutlined />} color="geekblue">Langfuse Trace</Tag>
+              </a>
+            )}
           </div>
           <Text copyable={{ text: run.run_id }} style={{ fontSize: 12 }}>Run ID: {run.run_id}</Text>
           {run.error_message && <Alert type="error" message={run.error_message} style={{ marginTop: 8 }} />}
+
+          {run.child_runs && run.child_runs.length > 0 && (
+            <Alert
+              type="info"
+              style={{ marginTop: 8 }}
+              message="子 Workflow"
+              description={
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {run.child_runs.map((c) => (
+                    <li key={c.run_id}>
+                      {c.template_name} — <Tag>{c.status}</Tag> <Text code>{c.run_id.slice(0, 8)}</Text>
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
+
           <Steps
             direction="vertical"
             size="small"
@@ -63,10 +135,46 @@ const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({ runId, onClose,
             style={{ marginTop: 16 }}
             items={run.steps.map((s) => ({
               title: `${s.step_name} (${s.skill_name})`,
-              status: s.status === 'completed' ? 'finish' : s.status === 'failed' ? 'error' : s.status === 'running' ? 'process' : 'wait',
+              status:
+                s.status === 'completed'
+                  ? 'finish'
+                  : s.status === 'failed'
+                    ? 'error'
+                    : s.status === 'running'
+                      ? 'process'
+                      : 'wait',
               description: s.error_message || (s.output_artifacts ? '已有产物' : undefined),
             }))}
           />
+
+          {timeline.length > 0 && (
+            <Card size="small" title="运行时间线" style={{ marginTop: 16 }}>
+              <List
+                size="small"
+                dataSource={timeline}
+                renderItem={(ev) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      title={
+                        <span>
+                          <Tag color={STATUS_COLOR[ev.status] || 'default'}>{ev.status}</Tag>
+                          {ev.step_name && <Text strong>{ev.step_name}</Text>}
+                          {ev.skill_name && <Text type="secondary"> · {ev.skill_name}</Text>}
+                        </span>
+                      }
+                      description={
+                        <>
+                          {ev.message && <div>{ev.message}</div>}
+                          <Text type="secondary" style={{ fontSize: 11 }}>{formatTime(ev.timestamp)}</Text>
+                        </>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            </Card>
+          )}
+
           {run.steps.some((s) => s.skill_name === 'llm-result-analyzer' && s.output_artifacts) && (
             <Alert
               type="success"
@@ -78,7 +186,13 @@ const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({ runId, onClose,
                   .map((s) => {
                     const art = s.output_artifacts as Record<string, { download_url?: string }> | null
                     const url = art?.analysis_report?.download_url
-                    return url ? <a key={s.step_name} href={url} target="_blank" rel="noreferrer">下载分析报告</a> : '见步骤产物'
+                    return url ? (
+                      <a key={s.step_name} href={url} target="_blank" rel="noreferrer">
+                        下载分析报告
+                      </a>
+                    ) : (
+                      '见步骤产物'
+                    )
                   })
               }
             />
@@ -89,7 +203,11 @@ const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({ runId, onClose,
   )
 
   if (embedded) {
-    return <Card size="small" title="运行监控" extra={onClose ? <a onClick={onClose}>关闭</a> : null}>{content}</Card>
+    return (
+      <Card size="small" title="运行监控" extra={onClose ? <a onClick={onClose}>关闭</a> : null}>
+        {content}
+      </Card>
+    )
   }
 
   return (

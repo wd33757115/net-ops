@@ -68,6 +68,8 @@ def get_plugin_detail(name: str) -> dict[str, Any] | None:
         "files": files,
         "on_complete": {
             "message": tpl.on_complete.message,
+            "notify_each_step": tpl.on_complete.notify_each_step,
+            "notify_on_failure": tpl.on_complete.notify_on_failure,
             "notification": {
                 "title": tpl.on_complete.notification_title,
                 "body": tpl.on_complete.notification_body,
@@ -92,7 +94,10 @@ def validate_workflow_yaml(content: str) -> dict[str, Any]:
     if not steps:
         errors.append("steps 不能为空")
 
-    skill_names = {s.get("name") for s in get_skill_manager().list_all_skills()}
+    skill_names = {s["name"] for s in get_skill_manager().list_all_skills() if s.get("name")}
+    enabled_skills = {
+        s["name"] for s in get_skill_manager().list_all_skills() if s.get("name") and s.get("enabled", True)
+    }
     for idx, step in enumerate(steps):
         step_name = step.get("name")
         skill = step.get("skill") or step.get("skill_name")
@@ -102,6 +107,8 @@ def validate_workflow_yaml(content: str) -> dict[str, Any]:
             errors.append(f"steps[{idx}] 缺少 skill")
         elif skill not in skill_names:
             warnings.append(f"Skill '{skill}' 未注册或已禁用")
+        elif skill not in enabled_skills:
+            warnings.append(f"Skill '{skill}' 当前处于禁用状态")
 
     expr_pattern = re.compile(r"\$\{[^}]+\}")
     for step in steps:
@@ -130,6 +137,23 @@ def validate_plugin_files(files: dict[str, str | None]) -> dict[str, Any]:
     return result
 
 
+def _normalize_plugin_files(name: str, files: dict[str, str]) -> dict[str, str]:
+    """保存前对齐 WORKFLOW name 与 CHAT.intent workflow 字段。"""
+    out = dict(files)
+    wf_content = out.get("WORKFLOW.yaml", "")
+    if wf_content.strip():
+        raw = yaml.safe_load(wf_content) or {}
+        raw["name"] = name
+        out["WORKFLOW.yaml"] = yaml.dump(raw, allow_unicode=True, sort_keys=False, default_flow_style=False)
+
+    chat_content = out.get("CHAT.intent.yaml")
+    if chat_content and chat_content.strip():
+        chat_raw = yaml.safe_load(chat_content) or {}
+        chat_raw["workflow"] = name
+        out["CHAT.intent.yaml"] = yaml.dump(chat_raw, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    return out
+
+
 def save_plugin(
     name: str,
     *,
@@ -140,6 +164,7 @@ def save_plugin(
     if not name or not re.match(r"^[a-z0-9][a-z0-9-]*$", name):
         return {"success": False, "message": "插件名须为小写字母、数字与连字符"}
 
+    files = _normalize_plugin_files(name, files)
     wf_content = files.get("WORKFLOW.yaml", "")
     validation = validate_workflow_yaml(wf_content)
     if not validation["valid"]:
@@ -153,12 +178,9 @@ def save_plugin(
         if content is not None and content.strip():
             (plugin_dir / fn).write_text(content, encoding="utf-8")
 
-    load_workflows(force=True)
-    from src.core.plugins.chat_intent import get_chat_intent_registry
-    from src.core.plugins.itsm_webhook import get_itsm_webhook_registry
+    from src.core.workflows.reload_bus import broadcast_workflow_reload
 
-    get_chat_intent_registry().load(force=True)
-    get_itsm_webhook_registry().load(force=True)
+    broadcast_workflow_reload(source="save_plugin", plugin_name=name)
 
     logger.info("已保存 Workflow 插件: %s", plugin_dir)
     return {"success": True, "message": "插件已保存", "path": str(plugin_dir)}
@@ -227,12 +249,19 @@ def preview_chat_intent(
         return {"matched": False, "reason": f"匹配到 {intent.workflow}，非目标 {workflow_name}"}
     tpl = get_template(intent.workflow)
     active_desc = format_steps_flow(resolve_active_steps(tpl, ctx)) if tpl else intent.workflow
+    from src.core.plugins.chat_intent import find_matching_intents, rank_intent_match
+
+    alternates = [
+        {"workflow": i.workflow, "score": rank_intent_match(query, i)}
+        for i in find_matching_intents(query, "chat")[:5]
+    ]
     return {
         "matched": True,
         "workflow": intent.workflow,
         "ticket_id": ticket_id,
         "active_steps": active_desc,
         "description": intent.description,
+        "candidates": alternates,
     }
 
 
@@ -294,6 +323,7 @@ steps:
 
 on_complete:
   message: 防火墙变更与 LLM 分析已完成
+  notify_each_step: true
   notification:
     title: "LLM 分析已完成 (${{context.ticket_id}})"
     body: "策略、变更工单与 LLM 分析报告已生成。"
@@ -301,7 +331,7 @@ on_complete:
 """
 
 MODE_A_CHAT_INTENT = """workflow: {name}
-priority: 90
+priority: 110
 description: 聊天触发防火墙变更 + LLM 结果分析（模式 A）
 
 match:
@@ -310,12 +340,9 @@ match:
     - 策略
   require_any_secondary:
     - LLM
-    - 分析
+    - llm
     - 结果分析
-    - 变更工单
-
-auto_if_source:
-  - itsm_webhook
+    - LLM分析
 
 context_from_state:
   ticket_title: ticket_title
@@ -428,6 +455,7 @@ steps:
 
 on_complete:
   message: Workflow 与 LLM 分析已完成
+  notify_each_step: true
   notification:
     title: "分析完成 (${{context.ticket_id}})"
     body: "所有步骤已执行，LLM 分析报告已生成。"

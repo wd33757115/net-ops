@@ -22,6 +22,13 @@ class WorkflowStepTemplate:
     inputs: dict[str, Any] = field(default_factory=dict)
     when: str | None = None
     label: str | None = None
+    parallel_group: str | None = None
+    depends_on: list[str] = field(default_factory=list)
+    subworkflow: str | None = None
+
+    @property
+    def is_subworkflow(self) -> bool:
+        return bool(self.subworkflow)
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,8 @@ class WorkflowCompletionConfig:
     notification_title: str | None = None
     notification_body: str | None = None
     notification_level: str = "success"
+    notify_each_step: bool = False
+    notify_on_failure: bool = True
 
 
 @dataclass(frozen=True)
@@ -59,16 +68,21 @@ def _parse_workflow_file(path: Path) -> WorkflowTemplate | None:
 
     steps: list[WorkflowStepTemplate] = []
     for item in raw.get("steps") or []:
+        subworkflow = item.get("subworkflow")
         skill = item.get("skill") or item.get("skill_name")
-        if not item.get("name") or not skill:
+        if not item.get("name") or (not skill and not subworkflow):
             continue
+        skill_name = str(skill) if skill else f"subworkflow:{subworkflow}"
         steps.append(
             WorkflowStepTemplate(
                 name=str(item["name"]),
-                skill_name=str(skill),
+                skill_name=skill_name,
                 inputs=dict(item.get("inputs") or {}),
                 when=item.get("when"),
                 label=item.get("label"),
+                parallel_group=item.get("parallel_group"),
+                depends_on=list(item.get("depends_on") or []),
+                subworkflow=str(subworkflow) if subworkflow else None,
             )
         )
 
@@ -79,6 +93,8 @@ def _parse_workflow_file(path: Path) -> WorkflowTemplate | None:
         notification_title=notif.get("title"),
         notification_body=notif.get("body"),
         notification_level=str(notif.get("level") or "success"),
+        notify_each_step=bool(oc.get("notify_each_step", notif.get("notify_each_step", False))),
+        notify_on_failure=bool(oc.get("notify_on_failure", notif.get("notify_on_failure", True))),
     )
 
     return WorkflowTemplate(

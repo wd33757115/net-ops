@@ -80,6 +80,29 @@ def list_workflow_steps(run_id: str) -> list[WorkflowStepRecord]:
         return steps
 
 
+def update_run_context(run_id: str, context: dict[str, Any]) -> None:
+    with get_db_session() as db:
+        run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+        if run:
+            run.context = context
+            run.updated_at = _now()
+
+
+def list_child_runs(parent_run_id: str) -> list[WorkflowRun]:
+    """列出子 Workflow Run（subworkflow 嵌套）。"""
+    with get_db_session() as db:
+        candidates = (
+            db.query(WorkflowRun)
+            .filter(WorkflowRun.source == "subworkflow")
+            .order_by(WorkflowRun.created_at.asc())
+            .all()
+        )
+        runs = [r for r in candidates if (r.context or {}).get("parent_run_id") == parent_run_id]
+        for r in runs:
+            db.expunge(r)
+        return runs
+
+
 def update_run_status(run_id: str, status: str, *, error: str | None = None) -> None:
     with get_db_session() as db:
         run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()

@@ -67,6 +67,17 @@ def _prepare_local_inputs(skill_name: str, params: dict[str, Any], tmpdir: str) 
                 f.write(data)
             prepared["_zip_path"] = zip_path
 
+    if skill_name in _ZIP_CLI_SKILLS and not prepared.get("_zip_path"):
+        config_url = prepared.get("config_files_url")
+        if config_url:
+            zip_path = os.path.join(tmpdir, "input_policy_from_url.zip")
+            try:
+                _download_url_to_path(str(config_url), Path(zip_path))
+                prepared["_zip_path"] = zip_path
+                logger.info("已通过 URL 下载策略 ZIP: %s", config_url)
+            except Exception as exc:
+                logger.warning("config_files_url 下载失败，将尝试其他输入: %s", exc)
+
     policy_url = prepared.get("policy_file_url")
     if policy_url and not prepared.get("_policy_path"):
         policy_path = os.path.join(tmpdir, "policy_input.xlsx")

@@ -21,7 +21,7 @@ def make_file_artifact(
 
 
 def normalize_step_result(raw: dict[str, Any] | None) -> dict[str, Any]:
-    """统一 Celery / Skill 返回结构。"""
+    """统一 Celery / Skill 返回结构，并保留原始字段供 ${steps.*.result} 表达式使用。"""
     if not raw:
         return {"success": False, "message": "空结果", "artifacts": {}}
     success = bool(raw.get("success", raw.get("status") == "success"))
@@ -41,7 +41,7 @@ def normalize_step_result(raw: dict[str, Any] | None) -> dict[str, Any]:
             filename=raw.get("change_excel_filename") or "change_ticket.xlsx",
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-    return {
+    normalized = {
         "success": success,
         "message": raw.get("message") or raw.get("result") or "",
         "artifacts": artifacts,
@@ -49,6 +49,14 @@ def normalize_step_result(raw: dict[str, Any] | None) -> dict[str, Any]:
         "download_url": raw.get("download_url"),
         "error": raw.get("error"),
     }
+    # 保留 Skill 原始字段（如 manifest 子字段、ticket_id 等）
+    merged = dict(raw)
+    merged.update({k: v for k, v in normalized.items() if v is not None or k in ("success", "message", "artifacts")})
+    merged["success"] = success
+    merged["artifacts"] = artifacts
+    if manifest is not None:
+        merged["manifest"] = manifest
+    return merged
 
 
 def merge_step_artifacts(*steps: dict[str, Any]) -> dict[str, Any]:

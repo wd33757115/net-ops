@@ -1,22 +1,51 @@
-import React, { useState } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import { Tabs } from 'antd'
 import GrokShellLayout from '../components/layout/GrokShellLayout'
 import SkillManageTab from '../components/skills/SkillManageTab'
 import WorkflowPluginList from '../components/skills/WorkflowPluginList'
-import CollabTemplateTab from '../components/skills/CollabTemplateTab'
+import TemplateMarketTab from '../components/skills/TemplateMarketTab'
 import DevGuideTab from '../components/skills/DevGuideTab'
 import WorkflowWizard, { WorkflowWizardInitial } from '../components/skills/WorkflowWizard'
-import { Card } from 'antd'
+import WorkflowWizardShell from '../components/skills/WorkflowWizardShell'
 
 const SkillsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState('skills')
   const [wizardOpen, setWizardOpen] = useState(false)
   const [wizardInitial, setWizardInitial] = useState<WorkflowWizardInitial | null>(null)
 
-  const openWizard = (initial?: WorkflowWizardInitial) => {
+  const closeWizard = useCallback(() => {
+    setWizardOpen(false)
+    setWizardInitial(null)
+  }, [])
+
+  const openWizard = useCallback((initial?: WorkflowWizardInitial) => {
     setWizardInitial(initial || null)
     setWizardOpen(true)
-  }
+  }, [])
+
+  const workflowTabContent = useMemo(
+    () => (
+      <>
+        <WorkflowPluginList
+          onCreateWizard={() => openWizard()}
+          onEditWizard={(initial) => openWizard(initial)}
+        />
+        <WorkflowWizardShell
+          title={wizardInitial?.initialDsl ? 'Workflow 编辑向导' : 'Workflow 创建向导'}
+          open={wizardOpen && activeTab === 'workflows'}
+          onClose={closeWizard}
+        >
+          <WorkflowWizard
+            open={wizardOpen && activeTab === 'workflows'}
+            onClose={closeWizard}
+            initial={wizardInitial}
+            onSaved={() => setActiveTab('workflows')}
+          />
+        </WorkflowWizardShell>
+      </>
+    ),
+    [activeTab, closeWizard, openWizard, wizardInitial, wizardOpen],
+  )
 
   const tabItems = [
     {
@@ -27,28 +56,12 @@ const SkillsPage: React.FC = () => {
     {
       key: 'workflows',
       label: 'Workflow 插件',
-      children: (
-        <>
-          <WorkflowPluginList onCreateWizard={() => openWizard()} />
-          {wizardOpen && activeTab === 'workflows' && (
-            <div className="grok-wizard-overlay">
-              <Card title="Workflow 创建向导" className="grok-wizard-card">
-                <WorkflowWizard
-                  open={wizardOpen}
-                  onClose={() => setWizardOpen(false)}
-                  initial={wizardInitial}
-                  onSaved={() => setActiveTab('workflows')}
-                />
-              </Card>
-            </div>
-          )}
-        </>
-      ),
+      children: workflowTabContent,
     },
     {
-      key: 'collab',
-      label: '协同模板',
-      children: <CollabTemplateTab />,
+      key: 'market',
+      label: '模板市场',
+      children: <TemplateMarketTab />,
     },
     {
       key: 'guide',
@@ -60,7 +73,7 @@ const SkillsPage: React.FC = () => {
   return (
     <GrokShellLayout
       title="Skills 和连接器"
-      subtitle="管理 Skill、编排 Workflow、配置多 Skill 协同与聊天触发"
+      subtitle="管理 Skill、编排 Workflow 插件、模板市场与聊天触发"
     >
       <Tabs
         activeKey={activeTab}

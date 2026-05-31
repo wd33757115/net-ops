@@ -65,9 +65,12 @@ def build_callback_payload(
 
 
 def main() -> int:
+    import time
+
     parser = argparse.ArgumentParser(description="ITSM 回调 Skill")
     parser.add_argument("--params", required=True)
     args = parser.parse_args()
+    started = time.perf_counter()
 
     with open(args.params, encoding="utf-8-sig") as f:
         p = json.load(f)
@@ -94,6 +97,7 @@ def main() -> int:
         status="success",
         config_zip=config_zip,
         change_excel=change_excel,
+        execution_time_ms=int((time.perf_counter() - started) * 1000),
         workflow_run_id=p.get("workflow_run_id"),
     )
     headers = {"Content-Type": "application/json", **(p.get("callback_headers") or {})}

@@ -17,11 +17,33 @@ from src.core.workflows.repository import (
     list_workflow_steps,
     mark_step_completed,
     mark_step_running,
+    update_run_context,
     update_run_status,
     update_run_step_index,
 )
+from src.observability.langfuse import (
+    end_workflow_trace,
+    record_workflow_step,
+    start_workflow_trace,
+)
 
 logger = logging.getLogger(__name__)
+
+# 进程内 Langfuse trace 缓存（run_id → trace）
+_WF_TRACES: dict[str, Any] = {}
+
+
+def _get_wf_trace(run_id: str):
+    return _WF_TRACES.get(run_id)
+
+
+def _set_wf_trace(run_id: str, trace) -> None:
+    if trace:
+        _WF_TRACES[run_id] = trace
+
+
+def _pop_wf_trace(run_id: str):
+    return _WF_TRACES.pop(run_id, None)
 
 
 class WorkflowEngine:
@@ -34,6 +56,7 @@ class WorkflowEngine:
         source: str = "chat",
         user_id: str | None = None,
         thread_id: str | None = None,
+        parent_run_id: str | None = None,
     ) -> str:
         load_workflows()
         template = get_template(template_name)
@@ -41,34 +64,123 @@ class WorkflowEngine:
             raise ValueError(f"未知 Workflow 模板: {template_name}")
 
         ticket_id = context.get("ticket_id")
+        ctx = dict(context or {})
+        if parent_run_id:
+            ctx["parent_run_id"] = parent_run_id
+
         run_id = create_workflow_run(
             template_name=template_name,
-            context=context,
+            context=ctx,
             ticket_id=ticket_id,
             source=source,
             user_id=user_id,
             thread_id=thread_id,
         )
-        active_tpl_steps = resolve_active_steps(template, context, run_id=run_id)
+
+        wf_trace = start_workflow_trace(
+            run_id=run_id,
+            template_name=template_name,
+            ticket_id=ticket_id,
+            source=source,
+            user_id=user_id,
+            parent_run_id=parent_run_id,
+        )
+        if wf_trace and wf_trace.trace_id:
+            ctx["langfuse_trace_id"] = wf_trace.trace_id
+            update_run_context(run_id, ctx)
+            _set_wf_trace(run_id, wf_trace)
+
+        active_tpl_steps = resolve_active_steps(template, ctx, run_id=run_id)
         if not active_tpl_steps:
             raise ValueError(f"Workflow {template_name} 无可用步骤")
-        steps = [
-            {
-                "name": s.name,
-                "skill_name": s.skill_name,
-                "celery_task": "execute_skill_task",
-            }
-            for s in active_tpl_steps
-        ]
+        steps = []
+        for s in active_tpl_steps:
+            if s.subworkflow:
+                steps.append(
+                    {
+                        "name": s.name,
+                        "skill_name": f"subworkflow:{s.subworkflow}",
+                        "celery_task": "execute_skill_task",
+                    }
+                )
+            else:
+                steps.append(
+                    {
+                        "name": s.name,
+                        "skill_name": s.skill_name,
+                        "celery_task": "execute_skill_task",
+                    }
+                )
         create_workflow_steps(run_id, steps)
         update_run_status(run_id, "running")
         publish_workflow_event(
             run_id,
             status="started",
             message=f"Workflow {template_name} 已启动",
+            extra={
+                "template_name": template_name,
+                "langfuse_trace_id": ctx.get("langfuse_trace_id"),
+                "parent_run_id": parent_run_id,
+            },
         )
-        cls.dispatch_step(run_id, 0)
+        cls._dispatch_from_index(run_id, 0)
         return run_id
+
+    @classmethod
+    def _parallel_batch_indices(cls, template, db_steps, start_index: int) -> list[int]:
+        """连续且 parallel_group 相同的步骤索引（>1 才视为并行批）。"""
+        from src.core.workflows.registry import find_step_template
+
+        if start_index >= len(db_steps):
+            return []
+        tpl_step = find_step_template(template, db_steps[start_index].step_name)
+        if not tpl_step or not tpl_step.parallel_group:
+            return [start_index]
+        group = tpl_step.parallel_group
+        indices = [start_index]
+        for j in range(start_index + 1, len(db_steps)):
+            ts = find_step_template(template, db_steps[j].step_name)
+            if ts and ts.parallel_group == group:
+                indices.append(j)
+            else:
+                break
+        return indices if len(indices) > 1 else [start_index]
+
+    @classmethod
+    def _dispatch_from_index(cls, run_id: str, step_index: int) -> None:
+        run = get_workflow_run(run_id)
+        if not run:
+            return
+        steps = list_workflow_steps(run_id)
+        if step_index >= len(steps):
+            cls._complete_workflow(run_id)
+            return
+        template = get_template(run.template_name)
+        batch = cls._parallel_batch_indices(template, steps, step_index) if template else [step_index]
+        if len(batch) > 1:
+            cls._dispatch_parallel_batch(run_id, batch)
+            return
+        cls.dispatch_step(run_id, step_index)
+
+    @classmethod
+    def _dispatch_parallel_batch(cls, run_id: str, indices: list[int]) -> None:
+        from src.core.workflows.tasks import dispatch_parallel_batch_task
+
+        run = get_workflow_run(run_id)
+        if not run:
+            return
+        steps = list_workflow_steps(run_id)
+        update_run_step_index(run_id, indices[0])
+        for idx in indices:
+            step = steps[idx]
+            publish_workflow_event(
+                run_id,
+                step_name=step.step_name,
+                skill_name=step.skill_name,
+                status="running",
+                message=f"并行执行: {step.skill_name}",
+            )
+        dispatch_parallel_batch_task.apply_async(args=[run_id, indices])
 
     @classmethod
     def dispatch_step(cls, run_id: str, step_index: int) -> None:
@@ -105,6 +217,13 @@ class WorkflowEngine:
         if not result.get("success"):
             err = result.get("error") or result.get("message") or "步骤执行失败"
             update_run_status(run_id, "failed", error=str(err))
+            record_workflow_step(
+                _get_wf_trace(run_id),
+                step_name=step.step_name,
+                skill_name=step.skill_name,
+                status="failed",
+                message=str(err),
+            )
             publish_workflow_event(
                 run_id,
                 step_name=step.step_name,
@@ -112,9 +231,18 @@ class WorkflowEngine:
                 status="failed",
                 message=str(err),
             )
+            cls._finish_trace(run_id, "failed", str(err))
             cls._notify_failure(run_id, str(err))
             return
 
+        record_workflow_step(
+            _get_wf_trace(run_id),
+            step_name=step.step_name,
+            skill_name=step.skill_name,
+            status="completed",
+            message=result.get("message") or "步骤完成",
+            output=result,
+        )
         publish_workflow_event(
             run_id,
             step_name=step.step_name,
@@ -122,12 +250,46 @@ class WorkflowEngine:
             status="completed",
             message=result.get("message") or "步骤完成",
         )
+        run = get_workflow_run(run_id)
+        template = get_template(run.template_name) if run else None
+        if template and template.on_complete.notify_each_step:
+            cls._notify_step_progress(run_id, step, result)
 
+        cls._advance_after_step(run_id, step_index, steps, template)
+
+    @classmethod
+    def _advance_after_step(cls, run_id: str, step_index: int, steps, template) -> None:
         next_index = step_index + 1
-        if next_index < len(steps):
-            cls.dispatch_step(run_id, next_index)
-        else:
+        if next_index >= len(steps):
             cls._complete_workflow(run_id)
+            return
+        batch = cls._parallel_batch_indices(template, steps, next_index) if template else [next_index]
+        if len(batch) > 1:
+            cls._dispatch_parallel_batch(run_id, batch)
+        else:
+            cls.dispatch_step(run_id, next_index)
+
+    @classmethod
+    def handle_parallel_batch_complete(cls, run_id: str, results: list[dict[str, Any]], next_index: int) -> None:
+        """并行批完成后继续调度或标记失败。"""
+        for item in results or []:
+            if not item.get("success", True):
+                err = item.get("error") or item.get("message") or "并行步骤失败"
+                update_run_status(run_id, "failed", error=str(err))
+                cls._finish_trace(run_id, "failed", str(err))
+                cls._notify_failure(run_id, str(err))
+                return
+        steps = list_workflow_steps(run_id)
+        run = get_workflow_run(run_id)
+        template = get_template(run.template_name) if run else None
+        if next_index >= len(steps):
+            cls._complete_workflow(run_id)
+            return
+        batch = cls._parallel_batch_indices(template, steps, next_index) if template else [next_index]
+        if len(batch) > 1:
+            cls._dispatch_parallel_batch(run_id, batch)
+        else:
+            cls.dispatch_step(run_id, next_index)
 
     @classmethod
     def _complete_workflow(cls, run_id: str) -> None:
@@ -158,9 +320,16 @@ class WorkflowEngine:
             extra={
                 "change_excel_url": (artifacts.get("change_excel") or {}).get("download_url"),
                 "config_zip_url": (artifacts.get("config_zip") or {}).get("download_url"),
+                "langfuse_trace_id": (run.context or {}).get("langfuse_trace_id"),
             },
         )
+        cls._finish_trace(run_id, "completed", message, output={"artifacts": list(artifacts.keys())})
         cls._notify_success(run_id, template, env, artifacts)
+
+    @classmethod
+    def _finish_trace(cls, run_id: str, status: str, message: str, *, output: Any | None = None) -> None:
+        wf_trace = _pop_wf_trace(run_id)
+        end_workflow_trace(wf_trace, status=status, message=message, output=output)
 
     @classmethod
     def _notify_success(
@@ -193,9 +362,34 @@ class WorkflowEngine:
         )
 
     @classmethod
+    def _notify_step_progress(cls, run_id: str, step, result: dict[str, Any]) -> None:
+        """步骤完成时发送站内通知（便于 Bell 跟踪中间进度）。"""
+        run = get_workflow_run(run_id)
+        if not run or not run.user_id:
+            return
+        label = step.step_name.replace("_", " ")
+        body = str(result.get("message") or step.skill_name)
+        art = result.get("artifacts") or {}
+        if isinstance(art, dict):
+            for key, meta in art.items():
+                if isinstance(meta, dict) and meta.get("download_url"):
+                    body += f"\n{key}: {meta['download_url']}"
+        create_notification(
+            user_id=run.user_id,
+            title=f"Workflow 步骤完成 — {label} ({run.ticket_id or run_id[:8]})",
+            body=body,
+            workflow_run_id=run_id,
+            thread_id=run.thread_id,
+            level="info",
+        )
+
+    @classmethod
     def _notify_failure(cls, run_id: str, error: str) -> None:
         run = get_workflow_run(run_id)
         if not run or not run.user_id:
+            return
+        template = get_template(run.template_name)
+        if template and not template.on_complete.notify_on_failure:
             return
         create_notification(
             user_id=run.user_id,
@@ -211,12 +405,13 @@ class WorkflowEngine:
         run = get_workflow_run(run_id)
         if not run:
             return {}
-        template = get_template(run.template_name)
-        if not template or step_index >= len(template.steps):
-            return dict(run.context or {})
 
         steps = list_workflow_steps(run_id)
         if step_index >= len(steps):
+            return dict(run.context or {})
+
+        template = get_template(run.template_name)
+        if not template:
             return dict(run.context or {})
 
         step_rec = steps[step_index]

@@ -257,6 +257,24 @@ class WorkflowStepResponse(BaseModel):
     celery_task_id: str | None = None
     output_artifacts: dict[str, Any] | None = None
     error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class WorkflowTimelineEvent(BaseModel):
+    run_id: str
+    step_name: str | None = None
+    skill_name: str | None = None
+    status: str = "running"
+    message: str = ""
+    timestamp: str | None = None
+
+
+class WorkflowChildRunSummary(BaseModel):
+    run_id: str
+    template_name: str
+    status: str
+    error_message: str | None = None
 
 
 class WorkflowRunResponse(BaseModel):
@@ -269,6 +287,10 @@ class WorkflowRunResponse(BaseModel):
     error_message: str | None = None
     context: dict[str, Any] | None = None
     steps: list[WorkflowStepResponse] = Field(default_factory=list)
+    timeline: list[WorkflowTimelineEvent] = Field(default_factory=list)
+    child_runs: list[WorkflowChildRunSummary] = Field(default_factory=list)
+    langfuse_trace_id: str | None = None
+    langfuse_url: str | None = None
     created_at: datetime | None = None
     completed_at: datetime | None = None
 

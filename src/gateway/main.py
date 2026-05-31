@@ -177,6 +177,11 @@ async def lifespan(app: FastAPI):
         get_itsm_webhook_registry().load(force=True)
         intent_count = len(get_chat_intent_registry().all_intents())
         print(f"[Lifespan] [OK] Workflow 插件: {wf_count} 个, Chat Intent: {intent_count} 个")
+
+        from src.core.workflows.reload_bus import start_reload_listener
+
+        start_reload_listener()
+        print("[Lifespan] [OK] Workflow 多 Worker 热重载监听已启动")
     except Exception as e:
         print(f"[Lifespan] [WARN] Workflow 插件加载失败: {e}")
 
@@ -209,6 +214,14 @@ async def lifespan(app: FastAPI):
     print("\n" + "=" * 60)
     print("[Lifespan] Shutting down...")
     print("=" * 60)
+
+    try:
+        from src.core.workflows.reload_bus import stop_reload_listener
+
+        stop_reload_listener()
+        print("[Lifespan] [OK] Workflow reload listener stopped")
+    except Exception:
+        pass
 
     if app.state.redis_pool:
         await app.state.redis_pool.disconnect()

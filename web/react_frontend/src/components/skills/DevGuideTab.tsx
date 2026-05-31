@@ -60,17 +60,36 @@ const DEV_GUIDE_SECTIONS = [
     key: 'chat',
     label: '4. 聊天触发规则',
     children: (
-      <Alert
-        type="warning"
-        showIcon
-        message="聊天触发 Workflow 时，当前消息必须包含可识别工单号（如 REQ2025）"
-        description="示例：「根据工单 REQ2025001，生成防火墙策略并进行 LLM 分析」"
-      />
+      <>
+        <Alert
+          type="warning"
+          showIcon
+          message="聊天触发 Workflow 时，当前消息必须包含可识别工单号（如 REQ2025）"
+          description="示例：「根据工单 REQ2025001，生成防火墙策略并进行 LLM 分析」"
+        />
+        <Paragraph type="secondary" style={{ marginTop: 12 }}>
+          同 priority 时按 secondary 关键词命中数 tie-break；Webhook 请使用 ITSM.webhook.yaml，勿与聊天 Intent 混用 auto_if_source。
+        </Paragraph>
+      </>
+    ),
+  },
+  {
+    key: 'notify',
+    label: '5. 通知策略',
+    children: (
+      <>
+        <p>在 WORKFLOW.yaml 的 <code>on_complete</code> 中配置：</p>
+        <ul>
+          <li><code>notify_each_step: true</code> — 每步完成发站内通知（长流程推荐）</li>
+          <li><code>notify_each_step: false</code> — 默认，仅最终成功/失败通知</li>
+          <li><code>notify_on_failure: true</code> — 失败时通知（默认开启）</li>
+        </ul>
+      </>
     ),
   },
   {
     key: 'checklist',
-    label: '5. 发布检查清单',
+    label: '6. 发布检查清单',
     children: (
       <ul>
         <li>WORKFLOW.yaml 中引用的 Skill 已在 Skills 页启用</li>

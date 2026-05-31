@@ -123,28 +123,67 @@ def _query_matches(query: str, patterns: list[str]) -> bool:
     return any(re.search(re.escape(p), query, re.IGNORECASE) for p in patterns)
 
 
+def _count_query_matches(query: str, patterns: list[str]) -> int:
+    if not patterns:
+        return 0
+    return sum(1 for p in patterns if re.search(re.escape(p), query, re.IGNORECASE))
+
+
+def intent_matches_query(query: str, intent: ChatIntentPlugin) -> bool:
+    """判断话术是否满足该 Chat Intent 的 match 规则（不含工单号校验）。"""
+    if intent.require_any and not _query_matches(query, intent.require_any):
+        return False
+    if intent.require_all and not all(
+        re.search(re.escape(p), query, re.IGNORECASE) for p in intent.require_all
+    ):
+        return False
+    if intent.require_any_secondary and not _query_matches(query, intent.require_any_secondary):
+        return False
+    return bool(intent.require_any or intent.require_all or intent.require_any_secondary)
+
+
+def rank_intent_match(query: str, intent: ChatIntentPlugin) -> tuple[int, int, int, str]:
+    """匹配得分（越大越优先）：priority → secondary 命中数 → primary 命中数 → workflow 名。"""
+    secondary_hits = _count_query_matches(query, intent.require_any_secondary)
+    primary_hits = _count_query_matches(query, intent.require_any)
+    all_hits = _count_query_matches(query, intent.require_all)
+    return (intent.priority, secondary_hits + all_hits, primary_hits, intent.workflow)
+
+
+def find_matching_intents(query: str, source: str | None) -> list[ChatIntentPlugin]:
+    """返回所有匹配的 Chat Intent（已按 rank 降序）。"""
+    from src.core.workflows.metadata_repo import is_plugin_chat_active
+
+    _registry.load()
+    if source:
+        auto = [i for i in _registry._intents if source in i.auto_sources]
+        if auto:
+            auto.sort(key=lambda i: rank_intent_match(query or "", i), reverse=True)
+            return auto
+
+    matched = [
+        i
+        for i in _registry._intents
+        if intent_matches_query(query, i) and is_plugin_chat_active(i.workflow)
+    ]
+    if not matched:
+        return []
+    matched.sort(key=lambda i: rank_intent_match(query, i), reverse=True)
+    return matched
+
+
 def match_chat_workflow(query: str, source: str | None) -> ChatIntentPlugin | None:
     from src.common.ticket_utils import extract_ticket_id
 
-    _registry.load()
-    for intent in _registry._intents:
-        if source and source in intent.auto_sources:
-            return intent
-    for intent in _registry._intents:
-        if intent.require_any and not _query_matches(query, intent.require_any):
-            continue
-        if intent.require_all and not all(
-            re.search(re.escape(p), query, re.IGNORECASE) for p in intent.require_all
-        ):
-            continue
-        if intent.require_any_secondary and not _query_matches(query, intent.require_any_secondary):
-            continue
-        if intent.require_any or intent.require_all or intent.require_any_secondary:
-            # 聊天触发 Workflow 必须在本轮话术中识别到工单号
-            if not extract_ticket_id(query or ""):
-                return None
-            return intent
-    return None
+    matched = find_matching_intents(query, source)
+    if not matched:
+        return None
+    # Webhook auto_sources 已在 find_matching_intents 内直接返回
+    if source and source in (matched[0].auto_sources or []):
+        return matched[0]
+    if not extract_ticket_id(query or ""):
+        return None
+    return matched[0]
 
 
 def build_chat_workflow_context(state: dict[str, Any], intent: ChatIntentPlugin) -> dict[str, Any]:

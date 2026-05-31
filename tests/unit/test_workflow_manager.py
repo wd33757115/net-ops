@@ -52,8 +52,48 @@ def test_preview_chat_intent_matched():
     assert result.get("ticket_id")
 
 
+def test_save_plugin_syncs_workflow_name():
+    import shutil
+    from pathlib import Path
+
+    from src.core.plugins.chat_intent import get_chat_intent_registry
+    from src.core.workflows.manager import save_plugin
+
+    files = generate_from_collab_template("mode-a-generic", plugin_name="sync-test-wf")
+    files["WORKFLOW.yaml"] = files["WORKFLOW.yaml"].replace("name: custom-llm-analysis", "name: wrong-name")
+    files["CHAT.intent.yaml"] = files["CHAT.intent.yaml"].replace("workflow: custom-llm-analysis", "workflow: wrong-name")
+    result = save_plugin("sync-test-wf", category="custom", files=files)
+    assert result["success"] is True
+    plugin_dir = Path(result["path"])
+    wf = yaml.safe_load((plugin_dir / "WORKFLOW.yaml").read_text(encoding="utf-8"))
+    chat = yaml.safe_load((plugin_dir / "CHAT.intent.yaml").read_text(encoding="utf-8"))
+    assert wf["name"] == "sync-test-wf"
+    assert chat["workflow"] == "sync-test-wf"
+    shutil.rmtree(plugin_dir, ignore_errors=True)
+    get_chat_intent_registry().load(force=True)
+
+
 def test_preview_chat_intent_missing_ticket():
     files = generate_from_collab_template("mode-a-firewall-llm")
     result = preview_chat_intent("生成防火墙策略并进行 LLM 分析", chat_intent_yaml=files["CHAT.intent.yaml"])
     assert result["matched"] is False
     assert "工单" in (result.get("reason") or "")
+
+
+def test_chat_intent_llm_workflow_wins_when_llm_in_query():
+    from src.core.plugins.chat_intent import get_chat_intent_registry, match_chat_workflow
+
+    get_chat_intent_registry().load(force=True)
+    query = "根据工单 REQ2025001 生成防火墙策略并进行 LLM 结果分析"
+    intent = match_chat_workflow(query, "chat")
+    assert intent is not None
+    assert intent.workflow == "itsm-firewall-llm-analysis"
+
+
+def test_normalize_step_result_preserves_raw_fields():
+    from src.core.workflows.artifacts import normalize_step_result
+
+    raw = {"success": True, "manifest": {"ticket_id": "T1"}, "custom_field": "x"}
+    out = normalize_step_result(raw)
+    assert out["manifest"]["ticket_id"] == "T1"
+    assert out["custom_field"] == "x"

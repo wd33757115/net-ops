@@ -1,4 +1,4 @@
-import { api, getChatWebSocketUrl, type AuthSession } from '../config/api'
+import { api, getChatWebSocketUrl, type AuthSession, API_BASE_URL } from '../config/api'
 
 export interface ChatRequest {
   query: string
@@ -321,6 +321,10 @@ export const skillApi = {
     const response = await api.post(`/skills/${name}/test-run/`, { params })
     return response.data
   },
+  getSchema: async (name: string): Promise<import('../types/workflowDsl').SkillSchema> => {
+    const response = await api.get<import('../types/workflowDsl').SkillSchema>(`/skills/${name}/schema/`)
+    return response.data
+  },
 }
 
 export const knowledgeApi = {
@@ -586,21 +590,73 @@ export interface WorkflowTemplateSummary {
   has_webhook: boolean
 }
 
+export type WorkflowPluginStatus = 'draft' | 'review' | 'published' | 'archived'
+
+export interface WorkflowPluginSummary extends WorkflowTemplateSummary {
+  status: WorkflowPluginStatus
+  current_version: number
+  category?: string
+  plugin_path?: string
+  created_by?: string | null
+  updated_by?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  published_at?: string | null
+}
+
+export interface WorkflowPluginVersion {
+  id: number
+  plugin_name: string
+  version: number
+  status: string
+  change_summary?: string | null
+  created_by?: string | null
+  created_at?: string | null
+  file_keys?: string[]
+}
+
+export interface WorkflowVersionDiff {
+  plugin_name: string
+  version_a: number
+  version_b: number
+  file_key: string
+  diff: string
+  has_diff: boolean
+}
+
+export interface WorkflowImportBundle {
+  format: string
+  format_version: string
+  name: string
+  category: string
+  metadata?: Record<string, unknown>
+  files: Record<string, string>
+}
+
+export interface MarketTemplateSummary {
+  id: string
+  title: string
+  description: string
+  category: string
+  tags: string[]
+  source_plugin_name?: string | null
+  featured: boolean
+  use_count: number
+  created_by?: string | null
+  created_at?: string | null
+  file_keys: string[]
+}
+
+export interface MarketTemplateDetail extends MarketTemplateSummary {
+  files: Record<string, string>
+}
+
 export interface WorkflowTemplateDetail extends WorkflowTemplateSummary {
   files: Record<string, string | null>
   on_complete?: {
     message: string
     notification?: { title?: string; body?: string; level?: string }
   }
-}
-
-export interface CollabTemplate {
-  id: string
-  title: string
-  description: string
-  steps: Array<{ name: string; label: string; skill: string }>
-  default_plugin_name: string
-  category: string
 }
 
 export interface WorkflowRunSummary {
@@ -623,6 +679,25 @@ export interface WorkflowStepDetail {
   celery_task_id?: string | null
   output_artifacts?: Record<string, unknown> | null
   error_message?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+}
+
+export interface WorkflowTimelineEvent {
+  run_id: string
+  step_name?: string | null
+  skill_name?: string | null
+  status: string
+  message?: string
+  timestamp?: string
+  [key: string]: unknown
+}
+
+export interface WorkflowChildRunSummary {
+  run_id: string
+  template_name: string
+  status: string
+  error_message?: string | null
 }
 
 export interface WorkflowRunDetail {
@@ -635,6 +710,10 @@ export interface WorkflowRunDetail {
   error_message?: string | null
   context?: Record<string, unknown> | null
   steps: WorkflowStepDetail[]
+  timeline?: WorkflowTimelineEvent[]
+  child_runs?: WorkflowChildRunSummary[]
+  langfuse_trace_id?: string | null
+  langfuse_url?: string | null
   created_at?: string | null
   completed_at?: string | null
 }
@@ -652,6 +731,7 @@ export interface ChatIntentPreviewResult {
   ticket_id?: string | null
   active_steps?: string
   description?: string
+  candidates?: Array<{ workflow: string; score: [number, number, number, string] }>
 }
 
 export const workflowApi = {
@@ -661,6 +741,15 @@ export const workflowApi = {
   },
   getTemplate: async (name: string): Promise<WorkflowTemplateDetail> => {
     const response = await api.get<WorkflowTemplateDetail>(`/workflows/templates/${name}/`)
+    return response.data
+  },
+  getTemplateDsl: async (name: string): Promise<{
+    success: boolean
+    dsl: import('../types/workflowDsl').WorkflowDSL
+    chat_intent_yaml: string
+    webhook_yaml: string
+  }> => {
+    const response = await api.get(`/workflows/templates/${name}/dsl/`)
     return response.data
   },
   reload: async () => {
@@ -677,20 +766,6 @@ export const workflowApi = {
   },
   updateTemplate: async (name: string, data: { name: string; category: string; files: Record<string, string> }) => {
     const response = await api.put(`/workflows/templates/${name}/`, data)
-    return response.data
-  },
-  listCollabTemplates: async (): Promise<CollabTemplate[]> => {
-    const response = await api.get<CollabTemplate[]>('/workflows/collab-templates/')
-    return response.data
-  },
-  generateFromCollabTemplate: async (data: {
-    template_id: string
-    plugin_name?: string
-    step1_skill?: string
-    step2_skill?: string
-    description?: string
-  }) => {
-    const response = await api.post<{ files: Record<string, string> }>('/workflows/collab-templates/generate/', data)
     return response.data
   },
   previewChatIntent: async (data: {
@@ -710,8 +785,156 @@ export const workflowApi = {
     const response = await api.get<WorkflowRunDetail>(`/workflows/${runId}/`)
     return response.data
   },
+  getRunTimeline: async (runId: string) => {
+    const response = await api.get<{
+      run_id: string
+      status: string
+      events: WorkflowTimelineEvent[]
+      langfuse_trace_id?: string
+      langfuse_url?: string
+    }>(`/workflows/${runId}/timeline/`)
+    return response.data
+  },
+  getRunEventsStreamUrl: (runId: string) => `${API_BASE_URL}/workflows/${runId}/events/stream/`,
   testRun: async (data: { template_name: string; context: Record<string, unknown> }) => {
     const response = await api.post('/workflows/runs/test/', data)
     return response.data
   },
+  preview: async (data: { dsl: import('../types/workflowDsl').WorkflowDSL; options?: import('../types/workflowDsl').GenerateOptions }) => {
+    const response = await api.post<import('../types/workflowDsl').WorkflowPreviewResult>('/workflows/preview/', data)
+    return response.data
+  },
+  generate: async (data: {
+    dsl: import('../types/workflowDsl').WorkflowDSL
+    options?: import('../types/workflowDsl').GenerateOptions
+  }) => {
+    const response = await api.post<import('../types/workflowDsl').WorkflowPreviewResult>('/workflows/generate/', data)
+    return response.data
+  },
+  inferMappings: async (dsl: import('../types/workflowDsl').WorkflowDSL) => {
+    const response = await api.post<{ suggestions: Array<{ step_name: string; skill: string; suggested_inputs: Record<string, string> }> }>(
+      '/workflows/infer-mappings/',
+      { dsl },
+    )
+    return response.data
+  },
+  listCategories: async (): Promise<string[]> => {
+    const response = await api.get<{ categories: string[] }>('/workflows/categories/')
+    return response.data.categories
+  },
+  previewExpressionHints: async (data: {
+    dsl: import('../types/workflowDsl').WorkflowDSL
+    step_name?: string
+    skill?: string
+  }) => {
+    const response = await api.post('/workflows/expression-hints/preview/', data)
+    return response.data
+  },
+  listPlugins: async (): Promise<WorkflowPluginSummary[]> => {
+    const response = await api.get<WorkflowPluginSummary[]>('/workflows/plugins/')
+    return response.data
+  },
+  listPluginVersions: async (name: string, limit = 50): Promise<WorkflowPluginVersion[]> => {
+    const response = await api.get<WorkflowPluginVersion[]>(`/workflows/plugins/${name}/versions/`, {
+      params: { limit },
+    })
+    return response.data
+  },
+  diffPluginVersions: async (
+    name: string,
+    v1: number,
+    v2: number,
+    fileKey = 'WORKFLOW.yaml',
+  ): Promise<WorkflowVersionDiff> => {
+    const response = await api.get<WorkflowVersionDiff>(`/workflows/plugins/${name}/versions/diff/`, {
+      params: { v1, v2, file_key: fileKey },
+    })
+    return response.data
+  },
+  exportPlugin: async (name: string): Promise<WorkflowImportBundle> => {
+    const response = await api.get<WorkflowImportBundle>(`/workflows/plugins/${name}/export/`, {
+      params: { format: 'json' },
+    })
+    return response.data
+  },
+  importPlugin: async (data: { bundle: WorkflowImportBundle; overwrite?: boolean }) => {
+    const response = await api.post('/workflows/import/', data)
+    return response.data
+  },
+  submitPluginReview: async (name: string) => {
+    const response = await api.post(`/workflows/plugins/${name}/submit-review/`)
+    return response.data
+  },
+  publishPlugin: async (name: string, changeSummary?: string) => {
+    const response = await api.post(`/workflows/plugins/${name}/publish/`, {
+      change_summary: changeSummary,
+    })
+    return response.data
+  },
+  rejectPlugin: async (name: string) => {
+    const response = await api.post(`/workflows/plugins/${name}/reject/`)
+    return response.data
+  },
+  deletePlugin: async (name: string) => {
+    const response = await api.delete(`/workflows/plugins/${name}/`)
+    return response.data
+  },
+  publishPluginToMarket: async (name: string, title?: string) => {
+    const response = await api.post(`/workflows/plugins/${name}/publish-to-market/`, { title })
+    return response.data
+  },
+  listMarketTemplates: async (params?: { category?: string; featured_only?: boolean }): Promise<MarketTemplateSummary[]> => {
+    const response = await api.get<MarketTemplateSummary[]>('/workflows/market/templates/', { params })
+    return response.data
+  },
+  getMarketTemplate: async (templateId: string): Promise<MarketTemplateDetail> => {
+    const response = await api.get<MarketTemplateDetail>(`/workflows/market/templates/${templateId}/`)
+    return response.data
+  },
+  dryRun: async (data: {
+    dsl: import('../types/workflowDsl').WorkflowDSL
+    context?: Record<string, unknown>
+    auto_map_inputs?: boolean
+  }): Promise<WorkflowDryRunResult> => {
+    const response = await api.post<WorkflowDryRunResult>('/workflows/dry-run/', data)
+    return response.data
+  },
+  suggestChatIntentFromNl: async (data: {
+    description: string
+    workflow_name: string
+    use_llm?: boolean
+  }) => {
+    const response = await api.post<{
+      success: boolean
+      source: string
+      chat_intent_yaml: string
+      tips?: string[]
+    }>('/workflows/chat-intent/suggest-nl/', data)
+    return response.data
+  },
+}
+
+export interface WorkflowDryRunStep {
+  index: number
+  name: string
+  label: string
+  skill: string
+  enabled: boolean
+  when?: string | null
+  parallel_group?: string | null
+  depends_on?: string[]
+  resolved_inputs: Record<string, unknown>
+  mock_result?: Record<string, unknown> | null
+}
+
+export interface WorkflowDryRunResult {
+  success: boolean
+  run_id: string
+  template_name: string
+  active_step_count: number
+  flow_description: string
+  steps: WorkflowDryRunStep[]
+  skipped_steps: string[]
+  parallel_batches: Array<{ parallel_group: string; step_names: string[] }>
+  validation: { valid: boolean; errors: string[]; warnings: string[] }
 }

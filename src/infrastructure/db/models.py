@@ -168,6 +168,67 @@ class WorkflowRun(Base):
     completed_at = Column(DateTime, nullable=True)
 
 
+class WorkflowPluginMetadata(Base):
+    """Workflow 插件治理元数据（文件仍为运行时真相源）。"""
+
+    __tablename__ = "netops_workflow_plugins"
+
+    name = Column(String(128), primary_key=True, index=True, comment="与 WORKFLOW.name 一致")
+    category = Column(String(64), default="itsm", index=True)
+    description = Column(Text, nullable=True)
+    plugin_path = Column(String(512), nullable=True)
+    status = Column(
+        String(32),
+        default="draft",
+        index=True,
+        comment="draft / review / published / archived",
+    )
+    current_version = Column(Integer, default=0)
+    created_by = Column(String(64), index=True, nullable=True)
+    updated_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    published_at = Column(DateTime, nullable=True)
+
+
+class WorkflowPluginVersion(Base):
+    """Workflow 插件发布版本快照。"""
+
+    __tablename__ = "netops_workflow_plugin_versions"
+
+    id = Column(String(64), primary_key=True, index=True)
+    plugin_name = Column(String(128), index=True, nullable=False)
+    version = Column(Integer, nullable=False)
+    files = Column(JSON, nullable=False, comment="WORKFLOW.yaml 等文件快照")
+    status = Column(String(32), default="published")
+    change_summary = Column(Text, nullable=True)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("uq_workflow_plugin_version", "plugin_name", "version", unique=True),
+    )
+
+
+class WorkflowMarketTemplate(Base):
+    """模板市场条目（内置 + 用户发布）。"""
+
+    __tablename__ = "netops_workflow_market_templates"
+
+    id = Column(String(64), primary_key=True, index=True)
+    title = Column(String(256), nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(64), default="itsm", index=True)
+    tags = Column(JSON, nullable=True)
+    files = Column(JSON, nullable=False)
+    source_plugin_name = Column(String(128), nullable=True, index=True)
+    featured = Column(Boolean, default=False)
+    use_count = Column(Integer, default=0)
+    is_public = Column(Boolean, default=True)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class WorkflowStepRecord(Base):
     """Workflow 单步执行记录。"""
 

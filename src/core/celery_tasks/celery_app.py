@@ -5,6 +5,7 @@ BASE_DIR = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from celery import Celery
+from celery.signals import worker_ready
 
 from src.common.config import get_settings
 
@@ -31,6 +32,15 @@ celery.conf.update(
     default_retry_delay=60,
     max_retries=settings.CELERY_MAX_RETRIES,
 )
+
+
+@worker_ready.connect
+def _on_worker_ready(**kwargs):
+    """Celery Worker 启动后订阅 Workflow 热重载广播。"""
+    from src.core.workflows.reload_bus import start_reload_listener
+
+    start_reload_listener()
+    print("[Celery] Workflow 多 Worker 热重载监听已启动")
 
 celery.autodiscover_tasks(["src.core.celery_tasks"])
 

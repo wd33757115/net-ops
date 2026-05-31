@@ -55,6 +55,11 @@ addopts = "-v --tb=short"
 env = [
     "PYTHONPATH=src:tests",
 ]
+markers = [
+    "integration: 集成测试（可能依赖外部服务）",
+    "postgres: 需要 PostgreSQL 数据库",
+    "celery: 需要 Celery Worker 或 eager 模式",
+]
 
 [tool.poetry]
 name = "netops-agent"

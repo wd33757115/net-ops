@@ -3,29 +3,34 @@ name: config-diff-tool
 version: 1.0.0
 description: 配置对比工具，用于对比网络设备配置差异并提供详细分析和变更影响评估
 category: network
-tags: [config, diff, compare, network, audit]
+tags:
+- config
+- diff
+- compare
+- network
+- audit
 author: NetOps Team
 triggers:
-  - "对比配置"
-  - "配置差异"
-  - "config diff"
+- 对比配置
+- 配置差异
+- config diff
 inputs:
-  - name: config1
-    type: string
-    required: true
-    description: 配置1（变更前/基准配置）
-  - name: config2
-    type: string
-    required: true
-    description: 配置2（变更后/当前配置）
-  - name: device_type
-    type: string
-    required: false
-    description: 设备类型，如 Cisco IOS、Huawei VRP
+- name: config1
+  type: string
+  required: true
+  description: 配置1（变更前/基准配置）
+- name: config2
+  type: string
+  required: true
+  description: 配置2（变更后/当前配置）
+- name: device_type
+  type: string
+  required: false
+  description: 设备类型，如 Cisco IOS、Huawei VRP
 outputs:
-  - name: diff_result
-    type: text
-    description: 结构化的对比分析报告
+- name: diff_result
+  type: text
+  description: 结构化的对比分析报告
 enabled: true
 fallback_to_rag: true
 ---

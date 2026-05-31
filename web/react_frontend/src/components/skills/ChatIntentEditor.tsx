@@ -72,6 +72,12 @@ const ChatIntentEditor: React.FC<ChatIntentEditorProps> = ({ value, onChange, wo
                   Workflow: {previewResult.workflow}<br />
                   工单: {previewResult.ticket_id}<br />
                   步骤: {previewResult.active_steps}
+                  {previewResult.candidates && previewResult.candidates.length > 1 && (
+                    <>
+                      <br />
+                      候选（按匹配度）: {previewResult.candidates.map((c) => c.workflow).join(' → ')}
+                    </>
+                  )}
                 </>
               ) : (
                 previewResult.reason

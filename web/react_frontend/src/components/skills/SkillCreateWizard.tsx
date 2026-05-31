@@ -135,6 +135,7 @@ const SkillCreateWizard: React.FC<SkillCreateWizardProps> = ({ open, onClose, on
       width={720}
       footer={null}
       destroyOnClose
+      maskClosable={false}
     >
       <Steps
         current={step}

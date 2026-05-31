@@ -1194,26 +1194,224 @@ body {
   gap: 16px;
 }
 
-.grok-wizard-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(15, 23, 42, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+.grok-workflow-wizard-wrap .ant-modal {
+  width: min(1040px, 96vw) !important;
+  max-width: 96vw;
+  top: 24px;
+  padding-bottom: 24px;
+}
+
+.grok-workflow-wizard-modal .ant-modal-content {
+  border-radius: 12px;
+}
+
+.grok-workflow-wizard-wrap:has(.grok-wizard-panel-canvas) .ant-modal,
+.grok-workflow-wizard-wrap:has(.wf-wizard-canvas-wrap) .ant-modal {
+  width: min(1280px, 96vw) !important;
+}
+
+.grok-workflow-wizard-wrap:has(.grok-wizard-panel-config) .ant-modal,
+.grok-workflow-wizard-wrap:has(.wf-step-config-panel) .ant-modal {
+  width: min(1120px, 96vw) !important;
+}
+
+.grok-workflow-wizard-wrap:has(.grok-wizard-panel-yaml) .ant-modal {
+  width: min(1200px, 96vw) !important;
 }
 
 .grok-wizard-card {
-  width: min(920px, 100%);
-  max-height: 90vh;
+  width: min(1040px, 96vw);
+  max-height: 92vh;
   overflow: auto;
   border-radius: 12px !important;
 }
 
+.grok-wizard-card > .ant-card-body {
+  max-height: calc(92vh - 57px);
+  overflow-y: auto;
+}
+
+.grok-wizard-card:has(.grok-wizard-panel-canvas) {
+  width: min(1280px, 96vw);
+  max-height: 94vh;
+}
+
+.grok-wizard-card:has(.grok-wizard-panel-config) {
+  width: min(1120px, 96vw);
+}
+
+.grok-wizard-card:has(.grok-wizard-panel-yaml) {
+  width: min(1200px, 96vw);
+}
+
+.grok-wizard-card:has(.wf-step-config-panel) {
+  width: min(1120px, 96vw);
+}
+
+.grok-wizard-card:has(.wf-wizard-canvas-wrap) {
+  width: min(1280px, 96vw);
+  max-height: 94vh;
+}
+
+.wf-wizard-canvas-wrap {
+  height: min(560px, 58vh);
+  border: 1px solid #ececec;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
 .grok-wizard-panel {
   padding: 4px 0;
+}
+
+.wf-step-config-panel {
+  margin-top: 4px;
+}
+
+.wf-step-config-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.wf-step-schema-meta {
+  margin-bottom: 12px;
+}
+
+.wf-step-config-collapse .ant-collapse-header {
+  align-items: center !important;
+}
+
+.wf-wizard-yaml-preview .ant-tabs-content {
+  min-height: 320px;
+}
+
+.wf-canvas-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr 220px;
+  height: 100%;
+  min-height: 480px;
+}
+
+.wf-skill-palette {
+  border-right: 1px solid #ececec;
+  padding: 12px;
+  overflow-y: auto;
+  background: #fafafa;
+}
+
+.wf-skill-palette-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.wf-skill-palette-group {
+  margin-bottom: 12px;
+}
+
+.wf-skill-palette-item {
+  padding: 6px 8px;
+  margin-top: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  background: #fff;
+  border: 1px solid #eee;
+}
+
+.wf-skill-palette-item:hover {
+  border-color: #1677ff;
+  background: #f0f7ff;
+}
+
+.wf-canvas-main {
+  position: relative;
+  min-height: 480px;
+}
+
+.wf-canvas-inspector {
+  border-left: 1px solid #ececec;
+  padding: 12px;
+  overflow-y: auto;
+  background: #fafafa;
+}
+
+.wf-inspector-form label {
+  display: block;
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: #666;
+}
+
+.wf-node {
+  padding: 10px 14px;
+  border-radius: 8px;
+  min-width: 160px;
+  font-size: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.wf-node-start,
+.wf-node-end {
+  background: #f6ffed;
+  border: 2px solid #52c41a;
+  text-align: center;
+}
+
+.wf-node-end {
+  background: #fff1f0;
+  border-color: #ff4d4f;
+}
+
+.wf-node-skill {
+  background: #fff;
+  border: 2px solid #1677ff;
+}
+
+.wf-node-condition {
+  background: #fffbe6;
+  border: 2px solid #faad14;
+  min-width: 140px;
+  text-align: center;
+}
+
+.wf-node-selected {
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.35);
+}
+
+.wf-node-title {
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.wf-node-sub {
+  color: #888;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.wf-node-when {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #d46b08;
+  word-break: break-all;
+}
+
+.wf-node-skill-head {
+  display: flex;
+  gap: 4px;
+}
+
+.wf-danger-btn {
+  color: #cf1322;
+  border-color: #ffa39e;
+}
+
+.wf-canvas-panel {
+  background: rgba(255, 255, 255, 0.9);
+  padding: 4px 8px;
+  border-radius: 6px;
 }
 
 .grok-content-inner .ant-switch-checked {
