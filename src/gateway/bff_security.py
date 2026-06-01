@@ -58,4 +58,15 @@ def is_bff_bypass_path(path: str) -> bool:
 
 
 def reject_message() -> dict:
+    """遗留兼容：纯字符串错误。新代码请用 reject_envelope。"""
     return {"error": "Access only allowed via Django BFF"}
+
+
+def reject_envelope(*, request_id: str | None = None) -> dict:
+    from src.core.exceptions import ErrorCode, error_envelope
+
+    return error_envelope(
+        code=ErrorCode.BFF_ORIGIN_REQUIRED,
+        message="Access only allowed via Django BFF",
+        request_id=request_id,
+    )

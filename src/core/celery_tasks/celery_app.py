@@ -4,12 +4,19 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
+from src.common.config import get_settings
+from src.core.logging import configure_logging, get_logger
+
+_settings = get_settings()
+configure_logging(log_level=_settings.LOG_LEVEL, log_format=_settings.LOG_FORMAT)
+logger = get_logger(__name__)
+
 from celery import Celery
 from celery.signals import worker_ready
 
-from src.common.config import get_settings
+from src.core.celery_tasks import logging_signals as _logging_signals  # noqa: F401 — 注册信号
 
-settings = get_settings()
+settings = _settings
 
 celery = Celery(
     "netops_worker",
@@ -40,7 +47,7 @@ def _on_worker_ready(**kwargs):
     from src.core.workflows.reload_bus import start_reload_listener
 
     start_reload_listener()
-    print("[Celery] Workflow 多 Worker 热重载监听已启动")
+    logger.info("celery_workflow_reload_listener_started")
 
 celery.autodiscover_tasks(["src.core.celery_tasks"])
 

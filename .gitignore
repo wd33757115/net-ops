@@ -18,9 +18,10 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # ============================================================
-# Local runtime (start/stop scripts PID & logs)
+# Backups (scripts/prod/backup.*)
 # ============================================================
-.runtime/
+backups/
+
 
 # ============================================================
 # Virtual Environment

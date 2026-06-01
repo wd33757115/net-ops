@@ -92,6 +92,10 @@ def _run_subworkflow_step(run_id: str, step_index: int, step_tpl) -> dict:
 
 
 def _run_workflow_step(run_id: str, step_index: int) -> dict:
+    from src.core.workflows.engine import WorkflowEngine
+
+    WorkflowEngine.ensure_wf_trace(run_id)
+
     run = get_workflow_run(run_id)
     if not run:
         return {"success": False, "error": "workflow run not found", "step_index": step_index}

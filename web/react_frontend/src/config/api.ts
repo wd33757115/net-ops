@@ -1,5 +1,6 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import { message } from 'antd'
+import { ApiError, resolveApiError } from '../utils/apiError'
 
 /** Django BFF 前缀，开发环境走 Vite 代理，生产环境由 Django 同源提供 */
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -12,6 +13,8 @@ export interface BffEnvelope<T = unknown> {
   success: boolean
   data: T
   error: string | null
+  code?: string | null
+  request_id?: string | null
 }
 
 export interface AuthSession {
@@ -115,7 +118,9 @@ api.interceptors.response.use(
     }
     if (isBffEnvelope(response.data)) {
       if (!response.data.success) {
-        return Promise.reject(new Error(response.data.error || 'Request failed'))
+        return Promise.reject(
+          resolveApiError(response.data, response.data.error || 'Request failed', response.status),
+        )
       }
       response.data = response.data.data
     }
@@ -134,16 +139,11 @@ api.interceptors.response.use(
         /* 保留原始 Blob */
       }
     }
-    const payloadObj =
-      payload && typeof payload === 'object' && !Array.isArray(payload)
-        ? (payload as Record<string, unknown>)
-        : null
-    const serverMessage =
-      (isBffEnvelope(payload) ? payload.error : null) ||
-      (payloadObj && typeof payloadObj.error === 'string' ? payloadObj.error : undefined) ||
-      (payloadObj && payloadObj.detail != null ? String(payloadObj.detail) : undefined) ||
-      (typeof payload === 'string' && payload.trimStart().startsWith('<') ? '接口不存在或服务未启动' : undefined) ||
-      error.message
+    const apiError =
+      typeof payload === 'string' && payload.trimStart().startsWith('<')
+        ? new ApiError('接口不存在或服务未启动', { status })
+        : resolveApiError(payload, error.message, status)
+    const serverMessage = apiError.message
 
     if (status === 401 && original && !original._retry && !original.url?.includes('/auth/login')) {
       original._retry = true
@@ -162,12 +162,15 @@ api.interceptors.response.use(
     } else if (status === 403) {
       message.error('没有权限执行此操作')
     } else if (status && status >= 500) {
-      message.error(`服务器错误: ${serverMessage}`)
+      const suffix = apiError.requestId ? ` (request_id: ${apiError.requestId})` : ''
+      message.error(`服务器错误: ${serverMessage}${suffix}`)
     }
 
-    return Promise.reject(new Error(serverMessage))
+    return Promise.reject(apiError)
   }
 )
+
+export { ApiError }
 
 /** WebSocket 连接地址，统一经 Django（8001）代理；携带 JWT 供 BFF 鉴权 */
 export function getChatWebSocketUrl(threadId?: string): string {

@@ -129,7 +129,9 @@ services:
       - netops-network
 
   fastapi:
-    image: python:3.11-slim
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.fastapi
     container_name: netops-fastapi
     # 仅内网可达，不映射 host 8000（前端统一走 Django :8001）
     expose:
@@ -141,21 +143,49 @@ services:
       - REDIS_HOST=redis
       - QDRANT_HOST=qdrant
       - MINIO_ENDPOINT=minio:9000
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - DEBUG=false
       - ENFORCE_BFF_ORIGIN=true
       - USE_SUPERVISOR_V2=true
       - TZ=Asia/Shanghai
-    volumes:
-      - ..:/app
-    working_dir: /app
-    command: >
-      bash -c "pip install -r requirements.txt &&
-               python -m uvicorn src.gateway.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - netops-network
+
+  celery:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.fastapi
+    container_name: netops-celery
+    env_file:
+      - ../.env
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+      - MINIO_ENDPOINT=minio:9000
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DEBUG=false
+      - USE_SUPERVISOR_V2=true
+      - TZ=Asia/Shanghai
+    command: celery -A src.core.celery_tasks.celery_app worker --loglevel=info -c 2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      fastapi:
+        condition: service_started
     restart: unless-stopped
     networks:
       - netops-network
@@ -171,7 +201,7 @@ services:
       - ../.env
     environment:
       - POSTGRES_HOST=postgres
-      - DJANGO_DEBUG=true
+      - DJANGO_DEBUG=false
       - FASTAPI_BASE_URL=http://fastapi:8000
       - TZ=Asia/Shanghai
     volumes:
@@ -188,7 +218,7 @@ services:
       context: ..
       dockerfile: deployment/Dockerfile.react
       args:
-        - REACT_APP_API_URL=http://localhost:8001
+        - VITE_API_BASE_URL=/api
     container_name: netops-react
     ports:
       - "3000:80"

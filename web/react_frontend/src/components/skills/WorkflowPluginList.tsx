@@ -198,42 +198,50 @@ const WorkflowPluginList: React.FC<WorkflowPluginListProps> = ({ onCreateWizard,
             const statusMeta = STATUS_LABEL[tpl.status] ?? STATUS_LABEL.published
             return (
               <Card key={tpl.name} className="grok-skill-card" bordered={false}>
-                <div className="grok-skill-card-title">{tpl.name}</div>
-                <Paragraph type="secondary" ellipsis={{ rows: 2 }}>{tpl.description || '—'}</Paragraph>
-                <div className="grok-chip-row">
-                  <Tag color={statusMeta.color}>{statusMeta.text}</Tag>
-                  <GrokChip tone="ok">v{tpl.current_version || tpl.version}</GrokChip>
-                  <GrokChip>{tpl.step_count} 步</GrokChip>
-                  {tpl.has_chat_intent && tpl.status === 'published' && <Tag color="blue">聊天触发</Tag>}
-                  {tpl.has_chat_intent && tpl.status !== 'published' && (
-                    <Tag color="default">聊天未激活</Tag>
-                  )}
-                  {tpl.has_webhook && <Tag color="purple">Webhook</Tag>}
-                </div>
-                <Text type="secondary" style={{ fontSize: 12 }}>{tpl.plugin_dir}</Text>
-                <div className="grok-skill-card-btns" style={{ marginTop: 12 }}>
-                  <GrokToolBtn icon={<EditOutlined />} onClick={() => handleEdit(tpl.name)}>编辑</GrokToolBtn>
-                  <GrokToolBtn icon={<EyeOutlined />} onClick={() => handleView(tpl.name)}>查看 YAML</GrokToolBtn>
-                  <GrokToolBtn
-                    icon={<PlayCircleOutlined />}
-                    loading={testRunLoading === tpl.name}
-                    onClick={() => handleTestRun(tpl.name)}
-                  >
-                    试跑
-                  </GrokToolBtn>
-                  <GrokToolBtn
-                    icon={<HistoryOutlined />}
-                    loading={historyLoading === tpl.name}
-                    onClick={() => handleViewLastRun(tpl.name)}
-                  >
-                    最近运行
-                  </GrokToolBtn>
-                  <GrokToolBtn icon={<SettingOutlined />} onClick={() => setGovernancePlugin(tpl)}>
-                    治理
-                  </GrokToolBtn>
-                  <GrokToolBtn icon={<DeleteOutlined />} onClick={() => handleDelete(tpl)}>
-                    删除
-                  </GrokToolBtn>
+                <div className="grok-skill-card-inner">
+                  <div className="grok-skill-card-main">
+                    <div className="grok-skill-card-title">{tpl.name}</div>
+                    <Paragraph type="secondary" className="grok-skill-card-desc" ellipsis={{ rows: 2 }}>
+                      {tpl.description || '—'}
+                    </Paragraph>
+                    <div className="grok-chip-row grok-skill-card-tags">
+                      <Tag color={statusMeta.color}>{statusMeta.text}</Tag>
+                      <GrokChip tone="ok">v{tpl.current_version || tpl.version}</GrokChip>
+                      <GrokChip>{tpl.step_count} 步</GrokChip>
+                      {tpl.has_chat_intent && tpl.status === 'published' && <Tag color="blue">聊天触发</Tag>}
+                      {tpl.has_chat_intent && tpl.status !== 'published' && (
+                        <Tag color="default">聊天未激活</Tag>
+                      )}
+                      {tpl.has_webhook && <Tag color="purple">Webhook</Tag>}
+                    </div>
+                    <Text type="secondary" className="grok-skill-card-path">{tpl.plugin_dir}</Text>
+                  </div>
+                  <div className="grok-skill-card-footer">
+                    <div className="grok-skill-card-btns">
+                      <GrokToolBtn icon={<EditOutlined />} onClick={() => handleEdit(tpl.name)}>编辑</GrokToolBtn>
+                      <GrokToolBtn icon={<EyeOutlined />} onClick={() => handleView(tpl.name)}>查看 YAML</GrokToolBtn>
+                      <GrokToolBtn
+                        icon={<PlayCircleOutlined />}
+                        loading={testRunLoading === tpl.name}
+                        onClick={() => handleTestRun(tpl.name)}
+                      >
+                        试跑
+                      </GrokToolBtn>
+                      <GrokToolBtn
+                        icon={<HistoryOutlined />}
+                        loading={historyLoading === tpl.name}
+                        onClick={() => handleViewLastRun(tpl.name)}
+                      >
+                        最近运行
+                      </GrokToolBtn>
+                      <GrokToolBtn icon={<SettingOutlined />} onClick={() => setGovernancePlugin(tpl)}>
+                        治理
+                      </GrokToolBtn>
+                      <GrokToolBtn icon={<DeleteOutlined />} onClick={() => handleDelete(tpl)}>
+                        删除
+                      </GrokToolBtn>
+                    </div>
+                  </div>
                 </div>
               </Card>
             )

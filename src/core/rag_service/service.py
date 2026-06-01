@@ -16,8 +16,10 @@ from llama_index.core.vector_stores import MetadataFilters
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
 from src.common.config import get_settings
+from src.core.logging import get_logger
 
 settings = get_settings()
+log = get_logger(__name__)
 
 
 class SimpleEmbedding(BaseEmbedding):
@@ -73,8 +75,7 @@ class UnifiedRAGService:
         self._initialize()
 
     def _initialize(self):
-        print("[INFO] Initializing Central RAG Service...")
-        print("[INFO] Using SimpleEmbedding (hash-based, no network required)")
+        log.info("rag_service_init_begin", embedding="SimpleEmbedding")
         self._embed_model = SimpleEmbedding()
 
         persist_dir = Path("./vectorstore/chroma_db")
@@ -95,13 +96,13 @@ class UnifiedRAGService:
                     storage_context=storage_context,
                     embed_model=self._embed_model
                 )
-                print(f"[INFO] RAG Service: Vector store loaded ({collection_count} embeddings)")
+                log.info("rag_service_loaded", embedding_count=collection_count)
             else:
-                print("[INFO] RAG Service: Collection empty, rebuilding index...")
+                log.info("rag_service_rebuild_index", reason="collection_empty")
                 self._reindex_documents(kb_path, storage_context)
         else:
             kb_path.mkdir(parents=True, exist_ok=True)
-            print(f"[INFO] Knowledge base empty at {kb_path}, creating fresh index")
+            log.info("rag_service_kb_empty", kb_path=str(kb_path))
             self._index = VectorStoreIndex(
                 nodes=[],
                 storage_context=storage_context,
@@ -135,7 +136,11 @@ class UnifiedRAGService:
             embed_model=self._embed_model,
             show_progress=True
         )
-        print(f"[INFO] RAG Service index rebuilt: {len(documents)} docs -> {len(nodes)} nodes")
+        log.info(
+            "rag_service_index_rebuilt",
+            document_count=len(documents),
+            node_count=len(nodes),
+        )
         return len(documents), len(nodes)
 
     def reindex_from_disk(self) -> dict[str, Any]:
@@ -151,7 +156,7 @@ class UnifiedRAGService:
         try:
             chroma_client.delete_collection("netops_knowledge")
         except Exception as exc:
-            print(f"[WARN] delete_collection: {exc}")
+            log.warning("rag_service_delete_collection_failed", error=str(exc))
 
         self._index = None
         chroma_collection = chroma_client.get_or_create_collection("netops_knowledge")

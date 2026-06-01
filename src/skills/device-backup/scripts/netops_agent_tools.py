@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 import sqlite3
 import sys
@@ -29,14 +28,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from langchain_core.messages import AIMessage
 from src.common.config import get_settings
+from src.core.logging import get_logger
 
 settings = get_settings()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("netops_tools")
+log = get_logger("netops_tools")
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -65,7 +60,7 @@ class DeviceFilter(BaseModel):
     @classmethod
     def validate_ip(cls, v: Optional[str]) -> Optional[str]:
         if v and not re.match(r'^[\d.]+$', v):
-            logger.warning(f"IP格式可能不正确: {v}")
+            log.warning(f"IP格式可能不正确: {v}")
         return v
 
 
@@ -223,8 +218,8 @@ class ConfigBackupTool:
             username = device.get("username") or "admin"
             password = device.get("password") or ""
             
-            logger.info(f"[备份] 正在连接设备: {device_name} ({ip})")
-            logger.debug(f"[备份] 设备凭证: user={username}, password={self._mask_password(password)}")
+            log.info(f"[备份] 正在连接设备: {device_name} ({ip})")
+            log.debug(f"[备份] 设备凭证: user={username}, password={self._mask_password(password)}")
             
             conn = ConnectHandler(
                 device_type="generic_ssh",
@@ -248,9 +243,9 @@ class ConfigBackupTool:
                 try:
                     output = conn.send_command(cmd, read_timeout=60)
                     outputs.append(f"命令: {cmd}\n输出:\n{output}\n{'-'*50}")
-                    logger.info(f"[备份] 设备 {device_name} 执行命令成功: {cmd}")
+                    log.info(f"[备份] 设备 {device_name} 执行命令成功: {cmd}")
                 except Exception as e:
-                    logger.error(f"[备份] 设备 {device_name} 命令执行失败: {cmd} - {e}")
+                    log.error(f"[备份] 设备 {device_name} 命令执行失败: {cmd} - {e}")
                     outputs.append(f"命令: {cmd}\n错误: {e}\n{'-'*50}")
             
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -258,7 +253,7 @@ class ConfigBackupTool:
             
             conn.disconnect()
             
-            logger.info(f"[备份] 设备 {device_name} 备份完成: {output_file}")
+            log.info(f"[备份] 设备 {device_name} 备份完成: {output_file}")
             
             return {
                 "device_name": device_name,
@@ -269,7 +264,7 @@ class ConfigBackupTool:
             }
             
         except Exception as e:
-            logger.error(f"[备份] 设备 {device.get('device_name', 'unknown')} 备份失败: {e}")
+            log.error(f"[备份] 设备 {device.get('device_name', 'unknown')} 备份失败: {e}")
             return {
                 "device_name": device.get("device_name", "unknown"),
                 "ip": device.get("ip"),
@@ -289,7 +284,7 @@ class ConfigBackupTool:
                 message=f"未找到符合条件的设备: {filter_params.model_dump(exclude_none=True)}"
             )
         
-        logger.info(f"[备份] 开始备份 {len(devices)} 个设备")
+        log.info(f"[备份] 开始备份 {len(devices)} 个设备")
         
         tasks = [self.backup_device(device) for device in devices]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -341,8 +336,8 @@ class PatrolTool:
             username = device.get("username") or "admin"
             password = device.get("password") or ""
             
-            logger.info(f"[巡检] 正在连接设备: {device_name} ({ip})")
-            logger.debug(f"[巡检] 设备凭证: user={username}, password={self._mask_password(password)}")
+            log.info(f"[巡检] 正在连接设备: {device_name} ({ip})")
+            log.debug(f"[巡检] 设备凭证: user={username}, password={self._mask_password(password)}")
             
             conn = ConnectHandler(
                 device_type="generic_ssh",
@@ -369,9 +364,9 @@ class PatrolTool:
                 try:
                     output = conn.send_command(cmd, read_timeout=60)
                     outputs.append(f"命令: {cmd}\n输出:\n{output}\n{'-'*50}")
-                    logger.info(f"[巡检] 设备 {device_name} 执行巡检命令: {cmd}")
+                    log.info(f"[巡检] 设备 {device_name} 执行巡检命令: {cmd}")
                 except Exception as e:
-                    logger.error(f"[巡检] 设备 {device_name} 命令执行失败: {cmd} - {e}")
+                    log.error(f"[巡检] 设备 {device_name} 命令执行失败: {cmd} - {e}")
             
             output_file = out_path / f"{device_name}_巡检报告_{timestamp}.txt"
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -379,7 +374,7 @@ class PatrolTool:
             
             conn.disconnect()
             
-            logger.info(f"[巡检] 设备 {device_name} 巡检完成: {output_file}")
+            log.info(f"[巡检] 设备 {device_name} 巡检完成: {output_file}")
             
             return {
                 "device_name": device_name,
@@ -391,7 +386,7 @@ class PatrolTool:
             }
             
         except Exception as e:
-            logger.error(f"[巡检] 设备 {device.get('device_name', 'unknown')} 巡检失败: {e}")
+            log.error(f"[巡检] 设备 {device.get('device_name', 'unknown')} 巡检失败: {e}")
             return {
                 "device_name": device.get("device_name", "unknown"),
                 "ip": device.get("ip"),
@@ -421,7 +416,7 @@ class PatrolTool:
                 message=f"未找到符合条件的设备: {filter_dump}",
             )
         
-        logger.info(f"[巡检] 开始巡检 {len(devices)} 个设备, 保存基线: {save_baseline}")
+        log.info(f"[巡检] 开始巡检 {len(devices)} 个设备, 保存基线: {save_baseline}")
         
         tasks = [self.patrol_device(device, save_baseline) for device in devices]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -541,7 +536,7 @@ class IntentParser:
             )
             
         except Exception as e:
-            logger.error(f"[意图解析] 解析失败: {e}")
+            log.error(f"[意图解析] 解析失败: {e}")
             return ParsedIntent(
                 action=ActionType.UNKNOWN,
                 confidence=0.0,
@@ -578,10 +573,10 @@ class NetOpsToolsOrchestrator:
     
     async def _execute_internal(self, query: str) -> Dict[str, Any]:
         """执行用户查询"""
-        logger.info(f"[执行] 收到查询: {query}")
+        log.info(f"[执行] 收到查询: {query}")
         
         intent = await self.intent_parser.parse(query)
-        logger.info(f"[执行] 解析意图: {intent.action.value}, 置信度: {intent.confidence}")
+        log.info(f"[执行] 解析意图: {intent.action.value}, 置信度: {intent.confidence}")
         
         if intent.action == ActionType.UNKNOWN:
             return {
@@ -617,7 +612,7 @@ class NetOpsToolsOrchestrator:
                 filter_dict = intent.filter.model_dump(exclude_none=True)
                 ticket_id = f"BACKUP_{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 
-                print(f"[DEBUG] 提交配置备份Celery任务: ticket_id={ticket_id}")
+                log.info("netops_tools_backup_celery_submitted", ticket_id=ticket_id)
                 celery_task = execute_config_backup_task.delay(
                     filter_params=filter_dict,
                     ticket_id=ticket_id
@@ -633,8 +628,8 @@ class NetOpsToolsOrchestrator:
                     "suggestion": f"任务ID: {celery_task.id}\n请等待任务完成后下载配置文件"
                 }
             except Exception as e:
-                logger.error(f"[配置备份] Celery任务提交失败: {e}")
-                logger.warning("[配置备份] 回退到同步执行模式")
+                log.error(f"[配置备份] Celery任务提交失败: {e}")
+                log.warning("[配置备份] 回退到同步执行模式")
                 result = await self.backup_tool.backup_by_filter(intent.filter)
                 return result.model_dump(exclude_none=True)
         
@@ -644,7 +639,11 @@ class NetOpsToolsOrchestrator:
                 filter_dict = intent.filter.model_dump(exclude_none=True)
                 ticket_id = f"PATROL_{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 
-                print(f"[DEBUG] 提交设备巡检Celery任务: ticket_id={ticket_id}, save_baseline={intent.save_baseline}")
+                log.info(
+                    "netops_tools_patrol_celery_submitted",
+                    ticket_id=ticket_id,
+                    save_baseline=intent.save_baseline,
+                )
                 celery_task = execute_device_patrol_task.delay(
                     filter_params=filter_dict,
                     ticket_id=ticket_id,
@@ -661,8 +660,8 @@ class NetOpsToolsOrchestrator:
                     "suggestion": f"任务ID: {celery_task.id}\n请等待任务完成后下载巡检报告"
                 }
             except Exception as e:
-                logger.error(f"[设备巡检] Celery任务提交失败: {e}")
-                logger.warning("[设备巡检] 回退到同步执行模式")
+                log.error(f"[设备巡检] Celery任务提交失败: {e}")
+                log.warning("[设备巡检] 回退到同步执行模式")
                 result = await self.patrol_tool.patrol_by_filter(intent.filter, intent.save_baseline)
                 return result.model_dump(exclude_none=True)
         

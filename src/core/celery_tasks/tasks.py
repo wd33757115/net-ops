@@ -2,7 +2,6 @@ import os
 import shutil
 import sys
 import tempfile
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -13,9 +12,11 @@ sys.path.insert(0, BASE_DIR)
 
 
 from src.common.config import get_settings
+from src.core.logging import get_logger
 from src.infrastructure.storage.minio_client import get_minio_storage
 
 settings = get_settings()
+log = get_logger(__name__)
 
 
 def _legacy_skill_execute(skill_name: str, **params: Any) -> dict[str, Any]:
@@ -54,12 +55,13 @@ def execute_config_backup_task(
     **kwargs
 ):
     """执行配置备份任务"""
-    task_id = self.request.id
     execution_start = datetime.now()
 
-    print(f"[DEBUG] config_backup task - task_id: {task_id}")
-    print(f"[DEBUG] config_backup task - filter_params: {filter_params}")
-    print(f"[DEBUG] config_backup task - ticket_id: {ticket_id}")
+    log.info(
+        "config_backup_task_started",
+        filter_params=filter_params,
+        ticket_id=ticket_id,
+    )
 
     try:
         from src.core.device_ops.loader import import_netops_agent_tools
@@ -82,7 +84,7 @@ def execute_config_backup_task(
         output_files = result.output_files or []
 
         if minio_client and minio_client.is_ready() and output_files:
-            print("[DEBUG] MinIO is ready, uploading config backup files...")
+            log.debug("config_backup_minio_upload_begin")
 
             if not ticket_id:
                 ticket_id = f"BACKUP_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -93,16 +95,24 @@ def execute_config_backup_task(
                 shutil.make_archive(zip_path.replace(".zip", ""), "zip", output_dir)
 
                 object_name = f"config_backup/{ticket_id}/{os.path.basename(zip_path)}"
-                print(f"[DEBUG] Uploading config backup to MinIO: {object_name}")
+                log.info("config_backup_minio_upload", object_name=object_name)
 
                 with open(zip_path, "rb") as f:
                     upload_success = minio_client.upload_file(object_name, f)
 
                 if upload_success:
                     download_url = minio_client.get_presigned_url(object_name, expires=3600*24*7)
-                    print(f"[DEBUG] Config backup download URL: {download_url}")
+                    log.info("config_backup_minio_uploaded", download_url=download_url)
 
         execution_time_ms = int((datetime.now() - execution_start).total_seconds() * 1000)
+        log.info(
+            "config_backup_task_completed",
+            ticket_id=ticket_id,
+            total_devices=result.total_devices,
+            success_devices=result.success_devices,
+            failed_devices=result.failed_devices,
+            duration_ms=execution_time_ms,
+        )
 
         return {
             "status": "success",
@@ -119,8 +129,13 @@ def execute_config_backup_task(
 
     except Exception as e:
         execution_time_ms = int((datetime.now() - execution_start).total_seconds() * 1000)
-        print(f"[DEBUG] config_backup task failed: {str(e)}")
-        # max_retries=0 时直接抛出异常，不重试
+        log.error(
+            "config_backup_task_failed",
+            ticket_id=ticket_id,
+            duration_ms=execution_time_ms,
+            error=str(e),
+            exc_info=e,
+        )
         raise e
 
 
@@ -133,13 +148,14 @@ def execute_device_patrol_task(
     **kwargs
 ):
     """执行设备巡检任务"""
-    task_id = self.request.id
     execution_start = datetime.now()
 
-    print(f"[DEBUG] device_patrol task - task_id: {task_id}")
-    print(f"[DEBUG] device_patrol task - filter_params: {filter_params}")
-    print(f"[DEBUG] device_patrol task - ticket_id: {ticket_id}")
-    print(f"[DEBUG] device_patrol task - save_baseline: {save_baseline}")
+    log.info(
+        "device_patrol_task_started",
+        filter_params=filter_params,
+        ticket_id=ticket_id,
+        save_baseline=save_baseline,
+    )
 
     try:
         from src.core.device_ops.loader import import_netops_agent_tools
@@ -162,7 +178,7 @@ def execute_device_patrol_task(
         output_files = result.output_files or []
 
         if minio_client and minio_client.is_ready() and output_files:
-            print("[DEBUG] MinIO is ready, uploading patrol files...")
+            log.debug("device_patrol_minio_upload_begin")
 
             if not ticket_id:
                 ticket_id = f"PATROL_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -173,16 +189,25 @@ def execute_device_patrol_task(
                 shutil.make_archive(zip_path.replace(".zip", ""), "zip", output_dir)
 
                 object_name = f"device_patrol/{ticket_id}/{os.path.basename(zip_path)}"
-                print(f"[DEBUG] Uploading device patrol to MinIO: {object_name}")
+                log.info("device_patrol_minio_upload", object_name=object_name)
 
                 with open(zip_path, "rb") as f:
                     upload_success = minio_client.upload_file(object_name, f)
 
                 if upload_success:
                     download_url = minio_client.get_presigned_url(object_name, expires=3600*24*7)
-                    print(f"[DEBUG] Device patrol download URL: {download_url}")
+                    log.info("device_patrol_minio_uploaded", download_url=download_url)
 
         execution_time_ms = int((datetime.now() - execution_start).total_seconds() * 1000)
+        log.info(
+            "device_patrol_task_completed",
+            ticket_id=ticket_id,
+            save_baseline=save_baseline,
+            total_devices=result.total_devices,
+            success_devices=result.success_devices,
+            failed_devices=result.failed_devices,
+            duration_ms=execution_time_ms,
+        )
 
         return {
             "status": "success",
@@ -200,6 +225,12 @@ def execute_device_patrol_task(
 
     except Exception as e:
         execution_time_ms = int((datetime.now() - execution_start).total_seconds() * 1000)
-        print(f"[DEBUG] device_patrol task failed: {str(e)}")
-        # max_retries=0 时直接抛出异常，不重试
+        log.error(
+            "device_patrol_task_failed",
+            ticket_id=ticket_id,
+            save_baseline=save_baseline,
+            duration_ms=execution_time_ms,
+            error=str(e),
+            exc_info=e,
+        )
         raise e

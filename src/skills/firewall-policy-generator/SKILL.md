@@ -1,7 +1,7 @@
 ---
 name: firewall-policy-generator
 version: 1.0.0
-description: 防火墙策略生成专家，擅长从Excel文件导入策略规则，生成可直接部署的防火墙配置
+description: 防火墙策略生成，擅长从Excel文件导入策略规则，生成可直接部署的防火墙配置
 category: security
 tags:
 - firewall

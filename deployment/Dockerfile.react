@@ -12,9 +12,9 @@ RUN npm install --no-package-lock
 # 复制项目文件
 COPY web/react_frontend/ ./
 
-# 构建参数（可选）
-ARG REACT_APP_API_URL
-ENV REACT_APP_API_URL=${REACT_APP_API_URL:-/api}
+# 构建参数：Vite 前端 API 基址（生产经 Nginx 同源 /api）
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
 # 构建生产版本
 RUN npm run build

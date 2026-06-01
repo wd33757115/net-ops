@@ -28,7 +28,7 @@ const SkillCard: React.FC<SkillCardProps> = ({
       size="small"
       className="grok-skill-card"
       title={
-        <span className="grok-skill-card-title">
+        <span className="grok-skill-card-title is-inline">
           <span>{skill.name}</span>
           <GrokChip tone={skill.enabled ? 'ok' : 'default'}>
             {skill.enabled ? 'active' : 'inactive'}
@@ -37,7 +37,7 @@ const SkillCard: React.FC<SkillCardProps> = ({
       }
       extra={<GrokChip>{skill.category}</GrokChip>}
     >
-      <Paragraph type="secondary" ellipsis={{ rows: 2 }} style={{ minHeight: 44, marginBottom: 12 }}>
+      <Paragraph type="secondary" className="grok-skill-card-desc" ellipsis={{ rows: 2 }}>
         {skill.description || '暂无描述'}
       </Paragraph>
       <div className="grok-chip-row" style={{ marginBottom: 12 }}>

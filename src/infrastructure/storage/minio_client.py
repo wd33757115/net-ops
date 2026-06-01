@@ -87,7 +87,20 @@ class MinIOStorage:
             logger.warning("MinIO 上传失败: %s", e)
             return False
 
-    def get_presigned_url(self, object_name: str, expires: int = 3600 * 24) -> str | None:
+    def get_presigned_url(
+        self,
+        object_name: str,
+        expires: int = 3600 * 24,
+        filename: str | None = None,
+    ) -> str | None:
+        """生成面向用户的下载链接（BFF 签名代理，非 MinIO 内网预签名）。"""
+        from src.infrastructure.storage.download_urls import build_object_download_url
+
+        name = filename or (object_name.rsplit("/", 1)[-1] if object_name else None)
+        return build_object_download_url(object_name, filename=name, expires=expires)
+
+    def get_internal_presigned_url(self, object_name: str, expires: int = 3600 * 24) -> str | None:
+        """MinIO 原生预签名（仅内网/调试）。"""
         if not self._client:
             return None
 
@@ -96,7 +109,7 @@ class MinIOStorage:
             url = self._client.presigned_get_object(
                 bucket_name=self._bucket_name,
                 object_name=object_name,
-                expires=timedelta(seconds=expires)
+                expires=timedelta(seconds=expires),
             )
             return str(url)
         except S3Error as e:

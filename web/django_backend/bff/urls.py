@@ -1,7 +1,7 @@
 from django.urls import path
 
 from . import auth, user_admin
-from .views import chat, conversations, health, itsm, knowledge, notifications, rag, skills, storage, system, tasks, upload, workflows
+from .views import chat, conversations, health, itsm, knowledge, notifications, rag, skills, storage, system, tasks, upload, workflows, artifacts
 
 urlpatterns = [
     path("auth/login/", auth.bff_login, name="bff_login"),
@@ -130,4 +130,5 @@ urlpatterns = [
     path("storage/files/<str:file_id>/", storage.proxy_storage_file_detail, name="bff_storage_file_detail"),
     path("storage/share/", storage.proxy_storage_share, name="bff_storage_share"),
     path("storage/share/folder/", storage.proxy_storage_share_folder, name="bff_storage_share_folder"),
+    path("artifacts/download/", artifacts.proxy_artifact_download, name="bff_artifact_download"),
 ]

@@ -35,6 +35,13 @@ sys.path.insert(0, str(BASE_DIR))
 os.environ["LLAMA_INDEX_CACHE_DIR"] = str(Path("./cache/llama_index").absolute())
 os.environ["LLAMA_INDEX_DISABLE_HTTP_CACHE"] = "1"
 
+from src.common.config import get_settings
+from src.core.logging import bind_context, configure_logging, get_logger, reset_context
+
+settings = get_settings()
+configure_logging(log_level=settings.LOG_LEVEL, log_format=settings.LOG_FORMAT)
+log = get_logger("gateway")
+
 import json
 import uuid
 
@@ -54,20 +61,22 @@ from src.gateway.chat_stream import stream_supervisor_chat
 
 def get_supervisor_graph():
     """加载 Supervisor v2 协同图（v1 已废弃）。"""
-    print("[Gateway] 使用 Supervisor v2 高级协同模式")
+    log.info("supervisor_v2_enabled")
     return compiled_graph_v2()
-from src.common.config import get_settings
+
 from src.core.rag_service.service import get_rag_service
 from src.gateway.bff_security import (
     is_bff_bypass_path,
     is_enforce_bff_origin_enabled,
     is_trusted_bff_request,
-    reject_message,
+    reject_envelope,
 )
 from src.gateway.conversation_service import get_conversation_service
+from src.gateway.exception_handlers import register_exception_handlers
 from src.gateway.skills_api import router as skills_router
 from src.gateway.knowledge_api import router as knowledge_router
 from src.gateway.storage_api import router as storage_router
+from src.gateway.artifacts_api import router as artifacts_router
 from src.gateway.workflow_api import router as workflow_router
 from src.gateway.notification_api import router as notification_router
 from src.gateway.schemas import (
@@ -94,15 +103,13 @@ from src.infrastructure.db.postgres import engine, verify_postgres_connection
 CELERY_AVAILABLE = False
 EXECUTE_FIREWALL_POLICY_TASK = None
 
-settings = get_settings()
-
 # =============================================================================
 # 数据库初始化（非阻塞，失败不阻止启动）
 # =============================================================================
 try:
     init_db_models(engine)
 except Exception as e:
-    print(f"[INFO] Skip auto table creation: {e}")
+    log.warning("db_auto_create_skipped", error=str(e))
 
 
 # =============================================================================
@@ -126,9 +133,7 @@ async def lifespan(app: FastAPI):
     """
     import redis.asyncio as aioredis
 
-    print("\n" + "=" * 60)
-    print(f"[Lifespan] {settings.PROJECT_NAME} starting up...")
-    print("=" * 60)
+    log.info("gateway_startup_begin", project=settings.PROJECT_NAME)
 
     # --- 启动：初始化 Redis 连接池 ---
     app.state.redis_pool = None
@@ -144,27 +149,26 @@ async def lifespan(app: FastAPI):
         )
         test_conn = aioredis.Redis(connection_pool=app.state.redis_pool)
         await test_conn.ping()
-        print(f"[Lifespan] [OK] Redis connected: {redis_url}")
+        log.info("redis_connected", redis_url=redis_url)
     except Exception as e:
-        print(f"[Lifespan] [WARN] Redis not available: {e}")
-        print("[Lifespan]   Celery tasks will not work without Redis")
+        log.warning("redis_unavailable", error=str(e))
 
     # --- 启动：验证 PostgreSQL ---
     try:
         pg_ok = verify_postgres_connection()
         if pg_ok:
-            print(f"[Lifespan] [OK] PostgreSQL connected: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}")
+            log.info("postgres_connected", host=settings.POSTGRES_HOST, port=settings.POSTGRES_PORT)
         else:
-            print("[Lifespan] [WARN] PostgreSQL connection failed")
+            log.warning("postgres_connection_failed")
     except Exception as e:
-        print(f"[Lifespan] [WARN] PostgreSQL not available: {e}")
+        log.warning("postgres_unavailable", error=str(e))
 
     # --- 启动：预加载 RAG 服务 ---
     try:
         app.state.rag_service = get_rag_service()
-        print("[Lifespan] [OK] RAG Service loaded")
+        log.info("rag_service_loaded")
     except Exception as e:
-        print(f"[Lifespan] [WARN] RAG Service load failed: {e}")
+        log.warning("rag_service_load_failed", error=str(e))
         app.state.rag_service = None
 
     # --- 启动：加载 Workflow / ITSM 插件包 ---
@@ -176,14 +180,14 @@ async def lifespan(app: FastAPI):
         wf_count = len(load_workflows(force=True))
         get_itsm_webhook_registry().load(force=True)
         intent_count = len(get_chat_intent_registry().all_intents())
-        print(f"[Lifespan] [OK] Workflow 插件: {wf_count} 个, Chat Intent: {intent_count} 个")
+        log.info("workflow_plugins_loaded", workflow_count=wf_count, chat_intent_count=intent_count)
 
         from src.core.workflows.reload_bus import start_reload_listener
 
         start_reload_listener()
-        print("[Lifespan] [OK] Workflow 多 Worker 热重载监听已启动")
+        log.info("workflow_reload_listener_started")
     except Exception as e:
-        print(f"[Lifespan] [WARN] Workflow 插件加载失败: {e}")
+        log.warning("workflow_plugins_load_failed", error=str(e))
 
     # --- 启动：统一加载 SKILL.md + SkillSystem + Registry ---
     try:
@@ -193,49 +197,46 @@ async def lifespan(app: FastAPI):
             rag_service=getattr(app.state, "rag_service", None),
             force=True,
         )
-        print(f"[Lifespan] [OK] Skill bootstrap: {skill_count} SKILL.md skills")
+        log.info("skill_bootstrap_complete", skill_count=skill_count)
     except Exception as e:
-        print(f"[Lifespan] [WARN] Skill bootstrap failed: {e}")
+        log.warning("skill_bootstrap_failed", error=str(e))
 
     # --- 启动：延迟加载 Agent Graph（避免启动时因网络问题卡住）---
-    # 图将在第一个请求时按需加载
     app.state.agent_graph = None
-    print("[Lifespan] [OK] Agent Graph will be lazy-loaded on first request")
+    log.info("agent_graph_lazy_load")
 
-    print("=" * 60)
     enforce = is_enforce_bff_origin_enabled()
-    print(f"[Lifespan] BFF origin enforcement: {'ON' if enforce else 'OFF'}")
-    print(f"[Lifespan] Startup complete. Docs: http://localhost:{settings.FASTAPI_PORT}/docs")
-    print("=" * 60 + "\n")
+    log.info(
+        "gateway_startup_complete",
+        bff_origin_enforcement=enforce,
+        docs_url=f"http://localhost:{settings.FASTAPI_PORT}/docs",
+    )
 
     yield
 
     # --- 关闭：清理资源 ---
-    print("\n" + "=" * 60)
-    print("[Lifespan] Shutting down...")
-    print("=" * 60)
+    log.info("gateway_shutdown_begin")
 
     try:
         from src.core.workflows.reload_bus import stop_reload_listener
 
         stop_reload_listener()
-        print("[Lifespan] [OK] Workflow reload listener stopped")
+        log.info("workflow_reload_listener_stopped")
     except Exception:
         pass
 
     if app.state.redis_pool:
         await app.state.redis_pool.disconnect()
-        print("[Lifespan] [OK] Redis connection pool closed")
+        log.info("redis_pool_closed")
 
     try:
         from src.infrastructure.db.postgres import engine
         engine.dispose()
-        print("[Lifespan] [OK] PostgreSQL engine disposed")
+        log.info("postgres_engine_disposed")
     except Exception:
         pass
 
-    print("[Lifespan] Shutdown complete")
-    print("=" * 60)
+    log.info("gateway_shutdown_complete")
 
 
 # =============================================================================
@@ -253,8 +254,10 @@ app = FastAPI(
 app.include_router(skills_router)
 app.include_router(knowledge_router)
 app.include_router(storage_router)
+app.include_router(artifacts_router)
 app.include_router(workflow_router)
 app.include_router(notification_router)
+register_exception_handlers(app)
 
 # =============================================================================
 # CORS 中间件（生产环境请限制 origins）
@@ -280,9 +283,51 @@ async def bff_origin_check(request: Request, call_next):
         return await call_next(request)
 
     if not is_trusted_bff_request(request.headers):
-        return JSONResponse(status_code=403, content=reject_message())
+        request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-Id") or str(uuid.uuid4())
+        return JSONResponse(
+            status_code=403,
+            content=reject_envelope(request_id=request_id),
+            headers={"X-Request-Id": request_id},
+        )
 
     return await call_next(request)
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    """注入 request_id 并记录 HTTP 请求摘要。"""
+    request_id = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    tokens = bind_context(request_id=request_id)
+    path = request.url.path
+    skip_access_log = path in ("/health", "/api/v1/notifications/")
+    start = datetime.now(timezone.utc)
+    try:
+        response = await call_next(request)
+        if not skip_access_log:
+            duration_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+            log.info(
+                "http_request_completed",
+                method=request.method,
+                path=path,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+            )
+        response.headers["X-Request-Id"] = request_id
+        return response
+    except Exception as exc:
+        duration_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+        log.error(
+            "http_request_failed",
+            method=request.method,
+            path=path,
+            duration_ms=duration_ms,
+            error=str(exc),
+            exc_info=exc,
+        )
+        raise
+    finally:
+        reset_context(tokens)
 
 
 # =============================================================================
@@ -413,12 +458,13 @@ async def chat_endpoint(
     # 延迟加载 Agent Graph
     agent_graph = app.state.agent_graph
     if not agent_graph:
-        print("[Chat] Lazy loading Agent Graph...")
+        log.info("chat_graph_lazy_loading")
         try:
             agent_graph = get_supervisor_graph()
             app.state.agent_graph = agent_graph
-            print("[Chat] Agent Graph loaded successfully")
+            log.info("chat_graph_loaded")
         except Exception as e:
+            log.error("chat_graph_load_failed", error=str(e), exc_info=e)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Agent Graph loading failed: {str(e)}"
@@ -443,10 +489,12 @@ async def chat_endpoint(
 
         if request.ticket_id:
             initial_state["ticket_id"] = request.ticket_id
-            print(f"[DEBUG] FastAPI - added ticket_id to initial_state: {request.ticket_id}")
 
-        print(f"[DEBUG] FastAPI - initial_state keys: {initial_state.keys()}")
-        print(f"[DEBUG] FastAPI - initial_state ticket_id: {initial_state.get('ticket_id')}")
+        log.debug(
+            "chat_request_prepared",
+            state_keys=sorted(initial_state.keys()),
+            ticket_id=initial_state.get("ticket_id"),
+        )
 
         graph_timeout = int(os.getenv("CHAT_GRAPH_TIMEOUT", "170"))
 
@@ -504,6 +552,13 @@ async def chat_endpoint(
             resource_id=conversation_id,
             detail={"agent_type": next_agent, "query_len": len(request.query or "")},
             ip_address=http_request.client.host if http_request.client else None,
+        )
+
+        log.info(
+            "chat_completed",
+            conversation_id=conversation_id,
+            next_agent=next_agent,
+            celery_task_id=celery_task_id,
         )
 
         return ChatResponse(
@@ -631,9 +686,9 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                 })
 
     except WebSocketDisconnect:
-        print(f"WebSocket disconnected: {thread_id}")
+        log.info("websocket_disconnected", thread_id=thread_id)
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        log.warning("websocket_error", thread_id=thread_id, error=str(e), exc_info=e)
     finally:
         pass
 
@@ -694,7 +749,11 @@ async def itsm_callback_endpoint(request: dict):
 
     须在通配路由 /{route_key} 之前注册，避免 callback 被当作 workflow route_key。
     """
-    print(f"[ITSM Callback] Received callback: {json.dumps(request, ensure_ascii=False)}")
+    log.info(
+        "itsm_callback_received",
+        callback_id=request.get("callback_id"),
+        source_ticket_id=request.get("source_ticket_id"),
+    )
 
     response = {
         "status": "success",
@@ -1054,11 +1113,13 @@ def start():
     target_port = settings.FASTAPI_PORT
     host = settings.FASTAPI_HOST
 
-    print(f"\n[*] {settings.PROJECT_NAME} FastAPI Gateway starting...")
-    print("[*] RAG Service initialized")
-    print("[*] Supervisor Agent ready")
-    print(f"[*] API Docs: http://localhost:{target_port}/docs")
-    print("=" * 70)
+    log.info(
+        "gateway_dev_start",
+        project=settings.PROJECT_NAME,
+        host=host,
+        port=target_port,
+        docs_url=f"http://localhost:{target_port}/docs",
+    )
 
     # Windows 多 worker 模式（4个worker，适合12700K）
     uvicorn.run(

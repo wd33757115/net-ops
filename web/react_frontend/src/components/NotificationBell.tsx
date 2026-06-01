@@ -1,10 +1,45 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Badge, Drawer, Empty, List, Popconfirm, Spin, Typography } from 'antd'
 import { BellOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from 'react-query'
 import { notificationApi, type AppNotification } from '../services/api'
+import { extractNotificationLinks, renderLinkifiedText } from '../utils/notificationLinks'
 
-const { Text, Paragraph } = Typography
+const { Paragraph } = Typography
+
+function stopLinkClick(event: React.MouseEvent<HTMLAnchorElement>) {
+  event.stopPropagation()
+}
+
+function NotificationContent({ item }: { item: AppNotification }) {
+  const links = useMemo(() => extractNotificationLinks(item.payload), [item.payload])
+  const knownUrls = useMemo(() => new Set(links.map((l) => l.href)), [links])
+
+  return (
+    <>
+      {item.body && (
+        <Paragraph className="grok-notification-body">
+          {renderLinkifiedText(item.body, knownUrls, stopLinkClick)}
+        </Paragraph>
+      )}
+      {links.length > 0 && (
+        <div className="grok-notification-downloads">
+          {links.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              target="_blank"
+              rel="noreferrer"
+              onClick={stopLinkClick}
+            >
+              {link.label}
+            </a>
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
 
 /** 小扫把图标（清空通知） */
 const BroomIcon: React.FC = () => (
@@ -21,7 +56,7 @@ const NotificationBell: React.FC = () => {
   const { data, isLoading, refetch } = useQuery(
     'notifications',
     notificationApi.list,
-    { refetchInterval: 30000, refetchOnWindowFocus: true }
+    { refetchInterval: 30000, refetchOnWindowFocus: true },
   )
 
   const unread = data?.unread_count ?? 0
@@ -38,7 +73,7 @@ const NotificationBell: React.FC = () => {
         queryClient.invalidateQueries('notifications')
       }
     },
-    [queryClient]
+    [queryClient],
   )
 
   const handleClearAll = useCallback(async () => {
@@ -115,21 +150,7 @@ const NotificationBell: React.FC = () => {
                 className={`grok-notification-item${item.read_at ? '' : ' is-unread'}`}
                 onClick={() => handleRead(item)}
               >
-                <List.Item.Meta
-                  title={item.title}
-                  description={
-                    <>
-                      {item.body && <Paragraph className="grok-notification-body">{item.body}</Paragraph>}
-                      {item.payload?.change_excel_url && (
-                        <Text type="secondary">
-                          <a href={item.payload.change_excel_url as string} target="_blank" rel="noreferrer">
-                            下载变更工单
-                          </a>
-                        </Text>
-                      )}
-                    </>
-                  }
-                />
+                <List.Item.Meta title={item.title} description={<NotificationContent item={item} />} />
               </List.Item>
             )}
           />

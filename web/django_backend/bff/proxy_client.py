@@ -61,13 +61,37 @@ def _build_headers(request_id: str, extra: dict | None = None) -> dict:
     return headers
 
 
+def _parse_upstream_error_body(body: Any) -> tuple[str, str | None, str | None, dict | None]:
+    """解析 FastAPI 统一错误信封，返回 message, code, request_id, raw_body。"""
+    if not isinstance(body, dict):
+        return str(body), None, None, None
+
+    if body.get("success") is False and isinstance(body.get("error"), dict):
+        err = body["error"]
+        message = str(err.get("message") or err.get("code") or "Upstream error")
+        code = err.get("code")
+        req_id = body.get("request_id")
+        return message, str(code) if code else None, str(req_id) if req_id else None, body
+
+    if isinstance(body.get("error"), dict):
+        err = body["error"]
+        message = str(err.get("message") or err.get("code") or "Upstream error")
+        code = err.get("code")
+        req_id = body.get("request_id")
+        return message, str(code) if code else None, str(req_id) if req_id else None, body
+
+    return _extract_upstream_error(body), None, None, body
+
+
 def _extract_upstream_error(body: Any) -> str:
     if isinstance(body, dict):
-        if body.get("error"):
+        if body.get("success") is False and isinstance(body.get("error"), dict):
+            return str(body["error"].get("message") or body["error"].get("code") or "Upstream error")
+        if body.get("error") and not isinstance(body.get("error"), dict):
             return str(body["error"])
         detail = body.get("detail")
         if isinstance(detail, list) and detail:
-            return str(detail[0])
+            return str(detail[0].get("msg") if isinstance(detail[0], dict) else detail[0])
         if detail:
             return str(detail)
     return str(body)
@@ -86,10 +110,13 @@ async def _proxy_json_response(
         body = {"raw": response.text}
 
     if response.status_code >= 400:
+        message, code, upstream_request_id, raw_body = _parse_upstream_error_body(body)
         return bff_error(
-            _extract_upstream_error(body),
+            message,
             response.status_code,
-            data=body,
+            data=raw_body,
+            code=code,
+            request_id=upstream_request_id or response.headers.get("X-Request-Id") or response.headers.get("X-Request-ID") or request_id,
         )
 
     return bff_success(body, status=response.status_code)
@@ -127,13 +154,20 @@ async def proxy_request(
         return bff_error(
             f"Upstream service timeout after {timeout or DEFAULT_TIMEOUT}s",
             504,
+            code="gateway_timeout",
+            request_id=request_id,
         )
     except httpx.ConnectError as exc:
         logger.error(f"[{request_id}] Upstream connection failed: {method} {url} -> {exc}")
-        return bff_error(f"Upstream service unreachable: {str(exc)}", 502)
+        return bff_error(
+            f"Upstream service unreachable: {str(exc)}",
+            502,
+            code="service_unavailable",
+            request_id=request_id,
+        )
     except Exception as exc:
         logger.error(f"[{request_id}] Proxy error: {method} {url} -> {exc}")
-        return bff_error(str(exc), 500)
+        return bff_error(str(exc), 500, code="internal_error", request_id=request_id)
 
 
 async def proxy_to_fastapi(

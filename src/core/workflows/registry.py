@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-logger = logging.getLogger(__name__)
+from src.core.logging import get_logger
+
+log = get_logger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS_ROOT = PROJECT_ROOT / "src" / "workflows"
@@ -58,12 +59,12 @@ def _parse_workflow_file(path: Path) -> WorkflowTemplate | None:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception as exc:
-        logger.warning("解析 Workflow 失败 %s: %s", path, exc)
+        log.warning("workflow_plugin_parse_failed", path=str(path), error=str(exc))
         return None
 
     name = raw.get("name")
     if not name:
-        logger.warning("WORKFLOW.yaml 缺少 name: %s", path)
+        log.warning("workflow_plugin_missing_name", path=str(path))
         return None
 
     steps: list[WorkflowStepTemplate] = []
@@ -118,9 +119,20 @@ def load_workflows(force: bool = False) -> dict[str, WorkflowTemplate]:
             tpl = _parse_workflow_file(path)
             if tpl:
                 found[tpl.name] = tpl
-                logger.info("已加载 Workflow 插件: %s (%s)", tpl.name, path.parent)
+                log.info(
+                    "workflow_plugin_loaded",
+                    plugin_name=tpl.name,
+                    plugin_dir=str(path.parent),
+                    step_count=len(tpl.steps),
+                )
 
     _TEMPLATES = found
+    log.info(
+        "workflow_plugins_load_complete",
+        plugin_count=len(found),
+        plugin_names=sorted(found.keys()),
+        force_reload=force,
+    )
     return _TEMPLATES
 
 

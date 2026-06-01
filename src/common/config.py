@@ -37,8 +37,11 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_SECURE: bool = False
     MINIO_BUCKET_NAME: str = "netops-files"
+    # 面向用户/ITSM 的公网入口（无尾斜杠），如 https://netops.example.com
+    PUBLIC_APP_URL: str = ""
+    # 下载链接 HMAC 密钥（默认同 JWT_SECRET_KEY）
+    ARTIFACT_DOWNLOAD_SECRET: str = ""
 
-    # 网盘配额（可在 .env 覆盖；支持纯数字或如 500*1024*1024 的表达式）
     STORAGE_MAX_FILE_BYTES: int = 500 * 1024 * 1024  # 单文件 500MB
     STORAGE_MAX_USER_BYTES: int = 20 * 1024 * 1024 * 1024  # 个人空间 20GB
 
@@ -80,6 +83,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "NetOps-MultiAgent"
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "console"  # console | json
     USE_SUPERVISOR_V2: bool = True
 
     # 与 Django SIMPLE_JWT 共用（默认与 SECRET_KEY 一致，生产务必在 .env 中显式设置）

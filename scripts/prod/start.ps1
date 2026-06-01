@@ -1,21 +1,53 @@
-# Production: start full Docker Compose stack
+# 生产环境 - 一键启动（Compose + 迁移 + 种子用户 + 冒烟）
 param(
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
+    [switch]$Dev,
     [switch]$UseSupervisorV1,
-    [int]$WaitSeconds = 45
+    [switch]$SkipPreflight,
+    [switch]$SkipSeed,
+    [switch]$SkipSmoke,
+    [switch]$SkipBuild,
+    [int]$WaitSeconds = 60
 )
 
 $ErrorActionPreference = "Stop"
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "  [WARN] $msg" -ForegroundColor Yellow }
 
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "  NetOps Production - Start" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 
 Set-Location $ProjectRoot
-$composeFile = Join-Path $ProjectRoot "deployment\docker-compose.yml"
+
+$composeBase = Join-Path $ProjectRoot "deployment\docker-compose.yml"
+$composeProd = Join-Path $ProjectRoot "deployment\docker-compose.prod.yml"
+$composeArgs = @("-f", $composeBase)
+if (-not $Dev -and (Test-Path $composeProd)) {
+    $composeArgs += @("-f", $composeProd)
+    Write-Host "  Mode: production (127.0.0.1 bind)" -ForegroundColor Gray
+} else {
+    Write-Host "  Mode: dev (all interfaces)" -ForegroundColor Gray
+}
+
+$envFile = Join-Path $ProjectRoot ".env"
+if (-not (Test-Path $envFile)) {
+    $example = Join-Path $ProjectRoot ".env.example"
+    if (Test-Path $example) {
+        Copy-Item $example $envFile
+        Write-Warn "已从 .env.example 复制 .env，请修改密钥后再上公网"
+    } else {
+        throw ".env 不存在且无 .env.example"
+    }
+}
+
+if (-not $SkipPreflight) {
+    Write-Step "Environment preflight"
+    & (Join-Path $PSScriptRoot "check_env.ps1") -EnvFile $envFile
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 
 if ($UseSupervisorV1) {
     $env:USE_SUPERVISOR_V2 = "false"
@@ -24,24 +56,45 @@ if ($UseSupervisorV1) {
 }
 
 Write-Step ("Docker compose up USE_SUPERVISOR_V2=" + $env:USE_SUPERVISOR_V2)
-docker compose -f $composeFile up -d
+$upArgs = @("compose") + $composeArgs + @("up", "-d")
+if (-not $SkipBuild) { $upArgs += "--build" }
+docker @upArgs
 Write-Ok "Containers started"
 
-Write-Step ("Wait " + $WaitSeconds + " seconds")
+Write-Step ("Wait $WaitSeconds seconds for healthchecks")
 Start-Sleep -Seconds $WaitSeconds
 
 Write-Step "Django migrate"
-docker compose -f $composeFile exec -T django python manage.py migrate --noinput 2>$null
+docker compose @composeArgs exec -T django python manage.py migrate --noinput 2>$null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "  [WARN] migrate may need retry when containers are ready" -ForegroundColor Yellow
+    Write-Warn "migrate 可能需容器就绪后重试"
 } else {
     Write-Ok "migrate done"
 }
 
+if (-not $SkipSeed) {
+    Write-Step "Seed auth users (admin/viewer demo accounts)"
+    docker compose @composeArgs exec -T django python manage.py seed_auth_users 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "seed_auth_users done"
+    } else {
+        Write-Warn "seed_auth_users skipped or failed (可能已存在用户)"
+    }
+}
+
 Write-Step "Container status"
-docker compose -f $composeFile ps
+docker compose @composeArgs ps
+
+if (-not $SkipSmoke) {
+    Write-Step "Smoke test"
+    & (Join-Path $PSScriptRoot "smoke_test.ps1") -SkipDockerCheck
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "冒烟未全部通过，请检查日志：docker compose logs celery --tail 80"
+        exit $LASTEXITCODE
+    }
+}
 
 Write-Host ""
-Write-Host "  React:    http://localhost:3000" -ForegroundColor Gray
-Write-Host "  Django:   http://localhost:8001" -ForegroundColor Gray
+Write-Host "  React:  http://127.0.0.1:3000" -ForegroundColor Gray
+Write-Host "  Django: http://127.0.0.1:8001" -ForegroundColor Gray
 Write-Host "============================================================" -ForegroundColor Cyan

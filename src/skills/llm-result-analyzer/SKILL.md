@@ -1,7 +1,7 @@
 ---
 name: llm-result-analyzer
 version: 1.0.0
-description: 读取上游 Skill/Workflow 步骤的结构化结果，调用 LLM 生成分析报告（模式 A 专用）
+description: 读取上游 Skill/Workflow 步骤的结构化结果，调用 LLM 生成分析报告
 category: analysis
 tags:
 - llm

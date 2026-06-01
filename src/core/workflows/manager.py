@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from src.core.logging import get_logger
 from src.core.plugins.chat_intent import match_chat_workflow
 from src.core.workflows.registry import (
     WORKFLOWS_ROOT,
@@ -21,7 +21,7 @@ from src.core.workflows.registry import (
 )
 from src.skills.skill_manager import get_skill_manager
 
-logger = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 PLUGIN_FILES = ("WORKFLOW.yaml", "CHAT.intent.yaml", "ITSM.webhook.yaml")
 
@@ -182,7 +182,12 @@ def save_plugin(
 
     broadcast_workflow_reload(source="save_plugin", plugin_name=name)
 
-    logger.info("已保存 Workflow 插件: %s", plugin_dir)
+    log.info(
+        "workflow_plugin_saved",
+        plugin_name=name,
+        category=category,
+        plugin_dir=str(plugin_dir),
+    )
     return {"success": True, "message": "插件已保存", "path": str(plugin_dir)}
 
 

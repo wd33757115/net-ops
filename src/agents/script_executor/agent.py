@@ -10,8 +10,10 @@ sys.path.insert(0, str(BASE_DIR))
 from langchain_core.messages import AIMessage
 
 from src.common.config import get_settings
+from src.core.logging import get_logger
 
 settings = get_settings()
+log = get_logger(__name__)
 
 def script_executor_node(state: dict[str, Any]) -> dict[str, Any]:
     """
@@ -22,7 +24,7 @@ def script_executor_node(state: dict[str, Any]) -> dict[str, Any]:
     - 支持Celery异步任务分发
     """
     query = state["messages"][-1].content
-    print(f"\n[Script Executor Agent] Task request: {query[:50]}...")
+    log.info("script_executor_request", query_preview=query[:50])
 
     if "防火墙" in query or "策略" in query or "firewall" in query.lower():
         return handle_firewall_policy_request(state, query)
@@ -73,14 +75,11 @@ POST /api/v1/itsm/webhook/firewall-policy
 
         # 从state中获取ticket_id，如果没有则使用默认格式
         ticket_id = state.get("ticket_id")
-        print(f"[DEBUG] script_executor - ticket_id from state: {ticket_id}")
-        print(f"[DEBUG] script_executor - full state keys: {state.keys()}")
-
         if not ticket_id:
             ticket_id = f"CHAT_{thread_id[:8]}"
-            print(f"[DEBUG] script_executor - using default ticket_id: {ticket_id}")
+            log.debug("script_executor_ticket_default", ticket_id=ticket_id)
         else:
-            print(f"[DEBUG] script_executor - using provided ticket_id: {ticket_id}")
+            log.debug("script_executor_ticket_from_state", ticket_id=ticket_id)
 
         celery_task = execute_firewall_policy_task.delay(
             ticket_id=ticket_id,
@@ -91,7 +90,12 @@ POST /api/v1/itsm/webhook/firewall-policy
             assignee="chat_user"
         )
 
-        print(f"[DEBUG] script_executor - celery_task.id: {celery_task.task_id}")
+        log.info(
+            "script_executor_celery_submitted",
+            ticket_id=ticket_id,
+            celery_task_id=celery_task.task_id,
+            skill="firewall-policy",
+        )
 
         answer = f"""**防火墙策略生成任务已提交**
 
@@ -338,9 +342,11 @@ GET /api/v1/tasks/{celery_task_id}
             return new_state
 
     except Exception as e:
-        import traceback
-        print(f"[设备管理] 执行失败: {str(e)}")
-        print(f"[设备管理] 详细错误: {traceback.format_exc()}")
+        log.error(
+            "script_executor_device_mgmt_failed",
+            error=str(e),
+            exc_info=e,
+        )
 
         answer = f"""**设备管理服务错误**
 

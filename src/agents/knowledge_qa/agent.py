@@ -10,9 +10,11 @@ from langchain_core.messages import AIMessage
 from langchain_deepseek import ChatDeepSeek
 
 from src.common.config import get_settings
+from src.core.logging import get_logger
 from src.core.rag_service.service import get_rag_service
 
 settings = get_settings()
+log = get_logger(__name__)
 rag_service = get_rag_service()
 
 # RAG-specific LLM (separate instance, faster settings)
@@ -53,7 +55,7 @@ def knowledge_qa_node(state: dict[str, Any]) -> dict[str, Any]:
     - Concise prompt to reduce LLM processing time
     """
     query = state["messages"][-1].content
-    print(f"\n[Knowledge QA Agent] Processing query: {query[:60]}...")
+    log.info("knowledge_qa_begin", query_preview=query[:60])
 
     t_start = time.time()
 
@@ -65,8 +67,8 @@ def knowledge_qa_node(state: dict[str, Any]) -> dict[str, Any]:
     context = retrieved["context_str"]
     references = retrieved["references"]
     count = retrieved["count"]
-
-    print(f"   - Retrieved {count} documents in {time.time()-t_start:.1f}s")
+    retrieve_ms = int((time.time() - t_start) * 1000)
+    log.info("knowledge_qa_retrieved", doc_count=count, duration_ms=retrieve_ms)
 
     # Early exit: no relevant documents found
     if count == 0:
@@ -77,7 +79,7 @@ def knowledge_qa_node(state: dict[str, Any]) -> dict[str, Any]:
             "- 联系管理员补充相关知识库文档\n"
             "- 或者换个具体的技术问题提问"
         )
-        print("   - No docs found, returning early exit answer")
+        log.info("knowledge_qa_no_docs")
     else:
         # Truncate context to speed up LLM response
         truncated_context = _truncate_context(context, max_chars=3000)
@@ -85,7 +87,7 @@ def knowledge_qa_node(state: dict[str, Any]) -> dict[str, Any]:
         # Check cache
         cache_key = f"{query[:50]}:{count}"
         if cache_key in _rag_cache:
-            print("   - Cache hit! Returning cached answer")
+            log.debug("knowledge_qa_cache_hit")
             answer = _rag_cache[cache_key]
         else:
             # Build concise prompt (reduced from previous version)
@@ -109,7 +111,8 @@ A:"""
                         "大模型 API 余额不足（402），无法基于知识库生成回答。请充值后重试。"
                     ) from exc
                 raise
-            print(f"   - LLM generation took {time.time()-t_llm:.1f}s")
+            llm_ms = int((time.time() - t_llm) * 1000)
+            log.info("knowledge_qa_llm_complete", duration_ms=llm_ms)
 
             answer = response.content.strip()
 
@@ -129,7 +132,8 @@ A:"""
                 seen.add(fname)
         answer += ref_str
 
-    print(f"   - Total RAG time: {time.time()-t_start:.1f}s, answer length: {len(answer)}")
+    total_ms = int((time.time() - t_start) * 1000)
+    log.info("knowledge_qa_complete", duration_ms=total_ms, answer_len=len(answer))
 
     new_state = {
         **state,

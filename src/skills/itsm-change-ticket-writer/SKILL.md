@@ -1,7 +1,7 @@
 ---
 name: itsm-change-ticket-writer
 version: 1.2.0
-description: 基于金融行业标准模板，根据防火墙策略 ZIP/manifest 动态生成变更工单 Excel
+description: 基于标准模板，根据防火墙策略 ZIP/manifest 动态生成变更工单 Excel
 category: itsm
 tags:
 - itsm

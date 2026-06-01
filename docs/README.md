@@ -1,253 +1,69 @@
-# NetOps Multi-Agent System 使用指南
+# NetOps Agent 文档中心
 
-## 概述
-
-NetOps Multi-Agent System 是一个基于大语言模型的智能运维助手系统，支持：
-- 智能问答与故障诊断
-- 知识库检索 (RAG)
-- 自动化脚本执行
-- 防火墙策略生成
-- ITSM系统集成
+> 版本：2026-05-24
 
 ---
 
-## 系统架构（与实现对齐）
+## 正式文档（01–11）
 
-```mermaid
-flowchart LR
-    React[React :3000] --> Django[Django BFF :8001]
-    Django --> FastAPI[FastAPI :8000]
-    FastAPI --> LG[Supervisor v2]
-    LG -->|Skill| Celery[Celery Worker]
-    LG -->|知识问句| RAG[knowledge_qa]
-    RAG --> Chroma[(Chroma 本地)]
-    Chroma --- KB[(knowledge_base/)]
-    Celery --> RMQ[(RabbitMQ)]
-    Celery --> Redis[(Redis)]
-    Celery --> MinIO[(MinIO)]
-    FastAPI --> PG[(PostgreSQL)]
-```
+| 编号 | 文档 | 说明 |
+|------|------|------|
+| 01 | [系统架构设计](./01_系统架构设计.md) | 逻辑/物理架构、数据流、安全边界 |
+| 02 | [概要与详细设计](./02_概要与详细设计.md) | Supervisor、Skill、Workflow、RAG 详细设计 |
+| 03 | [数据库设计 & 数据字典](./03_数据库设计%20&%20数据字典.md) | PostgreSQL 表结构、字段说明 |
+| 04 | [API 接口文档](./04_API%20接口文档.md) | BFF/FastAPI 端点、认证、错误格式 |
+| 05 | [编码 & 工程规范](./05_编码%20&%20工程规范.md) | Python/React 规范、测试、Git |
+| 06 | [环境 & 编译构建说明](./06_环境%20&%20编译构建说明.md) | 依赖安装、本地启动、构建 |
+| 07 | [系统配置说明](./07_系统配置说明.md) | 环境变量完整清单 |
+| 08 | [日志规范 & 日志字典](./08_日志规范%20&%20日志字典.md) | structlog、事件字典、Langfuse |
+| 09 | [错误码定义文档](./09_错误码定义文档.md) | ErrorCode、统一错误信封 |
+| 10 | [部署安装手册](./10_部署安装手册.md) | Docker Compose、生产 checklist |
+| 11 | [运维技术手册 & 故障排查](./11_运维技术手册%20&%20故障排查.md) | 巡检、排障、备份恢复 |
+| 12 | [Supervisor 路由与 Skill 执行流程](./12_Supervisor路由与Skill执行流程.md) | 用户提问→Skill 匹配→Workflow/ExecutionPlan 全链路 + ITSM 时序 |
+| 13 | [生产上线清单](./13_生产上线清单.md) | 先上生产：阻塞项、冒烟、回滚、Compose 陷阱 |
 
-| 能力 | 实现 |
+---
+
+## 专项指南
+
+| 文档 | 说明 |
 |------|------|
-| 对话与 Agent 状态 | PostgreSQL + LangGraph checkpoint |
-| 知识库 RAG | **Chroma**（`vectorstore/chroma_db`），非 Qdrant |
-| 异步 Skill | Celery；Broker 多为 RabbitMQ，结果存 Redis |
-| 策略包下载 | MinIO 预签名 URL |
-
-完整架构图与端口说明见仓库根目录 [README.md](../README.md#系统架构)。
+| [SKILL_CREATION_GUIDE.md](./SKILL_CREATION_GUIDE.md) | Skill 创建与 SKILL.md v2.0 |
+| [测试手册.md](./测试手册.md) | 单元/集成/E2E 测试 |
+| [auth-rbac-plan.md](./auth-rbac-plan.md) | JWT、RBAC、BFF 可信头 |
+| [langfuse-sse-plan.md](./langfuse-sse-plan.md) | Langfuse + SSE Trace 方案 |
+| [storage-minio-plan.md](./storage-minio-plan.md) | MinIO 网盘方案 |
 
 ---
 
-## 快速开始
+## 架构决策记录（ADR）
 
-### 1. 启动服务
-
-```powershell
-# 推荐：一键启动中间件 + FastAPI + Django + React + Celery
-.\scripts\test\install.ps1   # 首次
-.\scripts\test\start.ps1
-```
-
-或手动启动中间件与 Worker，见 [启动手册.md](启动手册.md)、[scripts/README.md](../scripts/README.md)。
-
-### 2. 访问服务
-
-| 服务 | 地址 |
+| 编号 | 文档 |
 |------|------|
-| API文档 | http://localhost:8000/docs |
-| 健康检查 | http://localhost:8000/health |
-| RabbitMQ | http://localhost:15672 (guest/guest) |
+| 001 | [Skill 体系架构](./adr/001-skill-system-architecture.md) |
+| 002 | [Progressive Disclosure](./adr/002-progressive-disclosure.md) |
+| 003 | [LLM 路由](./adr/003-llm-based-routing.md) |
+| 004 | [生产加固](./adr/004-production-hardening.md) |
+| 005 | [Django + React BFF](./adr/005-django-react-architecture.md) |
+| 006 | [Docker Compose 编排](./adr/006-docker-compose-orchestration.md) |
 
 ---
 
-## 核心功能
+## 已归档 / 重定向
 
-### 1. 智能问答
+以下文档已合并至编号系列，保留跳转：
 
-通过Chat接口提问：
-
-```bash
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{"query": "交换机端口Down了如何处理？"}'
-```
-
-### 2. 防火墙策略生成
-
-#### 方式一：ITSM Webhook触发
-
-```
-用户发起ITSM工单 → 执行人员选用Agent工具 → ITSM发送Webhook → 自动生成策略 → 回调ITSM
-```
-
-**Webhook地址**: `POST http://localhost:8000/api/v1/itsm/webhook/firewall-policy`
-
-#### 方式二：本地脚本执行
-
-```bash
-python src/skills/firewall-policy-generator/scripts/firewall-policy.py \
-    -t src/skills/firewall-policy-generator/scripts/topology.json \
-    -p src/skills/firewall-policy-generator/scripts/policies.xlsx \
-    -o output \
-    -u username \
-    -i TICKET_ID
-```
+| 旧文档 | 新文档 |
+|--------|--------|
+| [API文档.md](./API文档.md) | → [04_API 接口文档](./04_API%20接口文档.md) |
+| [DEPLOYMENT.md](./DEPLOYMENT.md) | → [10_部署安装手册](./10_部署安装手册.md) |
+| [logging-handbook.md](./logging-handbook.md) | → [08_日志规范 & 日志字典](./08_日志规范%20&%20日志字典.md) |
 
 ---
 
-## 目录结构
+## 快速链接
 
-```
-netops-agent/
-├── docs/                    # 文档目录
-│   ├── 启动手册.md          # 服务启动指南
-│   ├── 关闭手册.md          # 服务关闭指南
-│   ├── 测试手册.md          # 功能测试指南
-│   └── API文档.md           # API接口文档
-├── deployment/              # Docker部署配置
-│   └── docker-compose.yml   # 中间件编排
-├── src/                     # 源代码
-│   ├── agents/              # Agent实现
-│   ├── core/                # 核心模块
-│   │   └── celery_tasks/   # Celery异步任务
-│   ├── gateway/             # API网关
-│   ├── infrastructure/      # 基础设施
-│   └── skills/              # Skill 定义与脚本
-│       ├── firewall-policy-generator/
-│       │   ├── SKILL.md
-│       │   └── scripts/     # firewall-policy.py、topology.json 等
-│       ├── device-backup/
-│       │   ├── SKILL.md
-│       │   ├── scripts/     # netops_agent_tools.py、init_test_db.py
-│       │   └── data/          # db、outputs（运行时）
-│       └── device-patrol/
-│           ├── SKILL.md
-│           └── scripts/
-└── knowledge_base/          # 知识库文件
-    └── sops/                # SOP文档
-```
-
----
-
-## 配置文件
-
-### 环境变量 (.env)
-
-```bash
-# LLM配置
-LLM_PROVIDER=deepseek
-DEEPSEEK_API_KEY=your-api-key
-LLM_MODEL=deepseek-chat
-
-# RabbitMQ配置
-RABBITMQ_HOST=localhost
-RABBITMQ_PORT=5672
-RABBITMQ_USER=guest
-RABBITMQ_PASS=guest
-
-# Redis配置
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-# FastAPI配置
-FASTAPI_HOST=0.0.0.0
-FASTAPI_PORT=8000
-```
-
----
-
-## 常见问题
-
-### Q1: 任务提交成功但一直处于pending状态
-
-**原因**: Celery Worker未启动
-
-**解决**:
-```bash
-python -m celery -A src.core.celery_tasks.celery_app worker --loglevel=info -P solo
-```
-
-### Q2: 防火墙策略生成失败
-
-**原因**: 缺少openpyxl依赖
-
-**解决**:
-```bash
-pip install openpyxl
-```
-
-### Q3: RabbitMQ连接失败
-
-**原因**: Docker容器未启动或端口被占用
-
-**解决**:
-```bash
-docker-compose -f deployment/docker-compose.yml up -d rabbitmq
-docker ps | grep rabbitmq
-```
-
-### Q4: 设备管理功能报错 "No module named 'netmiko'"
-
-**原因**: 缺少 netmiko 库
-
-**解决**:
-```bash
-pip install netmiko
-```
-
-### Q5: 数据库路径错误或权限问题
-
-**原因**: 数据库路径配置错误
-
-**解决**:
-1. 确认数据库位置：`src/skills/device-backup/data/db/devices.db`
-2. 检查路径是否有读写权限
-3. 重新初始化数据库：
-   ```bash
-   python src/skills/device-backup/scripts/init_test_db.py
-   ```
-
----
-
-## 开发指南
-
-### 添加新的Agent
-
-1. 在 `src/agents/` 下创建新Agent目录
-2. 实现Agent逻辑
-3. 在 `src/agents/supervisor/graph.py` 中注册
-
-### 添加新的Celery任务
-
-1. 在 `src/core/celery_tasks/tasks.py` 中定义任务
-2. 使用 `@celery.task` 装饰器
-3. 配置重试策略和超时时间
-
-### 添加新的API端点
-
-1. 在 `src/gateway/main.py` 中添加路由
-2. 定义请求/响应模型 (schemas.py)
-3. 实现业务逻辑
-
----
-
-## 测试
-
-### 运行所有测试
-
-```bash
-# 单元测试
-python -m pytest tests/
-
-# 手动测试ITSM Webhook
-powershell -File docs/test_itsm_webhook.ps1
-```
-
----
-
-## 技术支持
-
-- 文档: `docs/` 目录
-- API测试: http://localhost:8000/docs
-- 日志: 查看Celery Worker和FastAPI终端输出
+- 项目根 [README.md](../README.md)
+- 脚本说明 [scripts/README.md](../scripts/README.md)
+- Web 开发 [web/README.md](../web/README.md)
+- OpenAPI：http://localhost:8000/docs（开发环境）

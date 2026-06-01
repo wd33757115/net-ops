@@ -1,8 +1,7 @@
 """Supervisor v2 图编排单元测试（无 LLM / 无真实设备）。"""
 
+from src.agents.supervisor.heuristic_plan import build_heuristic_execution_plan as _build_heuristic_execution_plan
 from src.agents.supervisor.graph_v2 import (
-    INTERMEDIATE_RESULTS_RESET,
-    _build_heuristic_execution_plan,
     _build_send_payload,
     _detect_dependency_cycle,
     _extract_ticket_id,

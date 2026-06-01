@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-import logging
 import threading
 from datetime import datetime, timezone
 from typing import Callable
 
 from src.auth.token_store import get_redis
+from src.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 RELOAD_CHANNEL = "workflow:reload"
 _listener_thread: threading.Thread | None = None
@@ -27,7 +27,12 @@ def reload_all_registries(*, source: str = "local") -> dict[str, int]:
     get_chat_intent_registry().load(force=True)
     intent_count = len(get_chat_intent_registry().all_intents())
     get_itsm_webhook_registry().load(force=True)
-    logger.info("Workflow 注册表已重载 source=%s templates=%s intents=%s", source, wf_count, intent_count)
+    log.info(
+        "workflow_registry_reloaded",
+        source=source,
+        template_count=wf_count,
+        chat_intent_count=intent_count,
+    )
     return {"templates": wf_count, "intents": intent_count}
 
 
@@ -35,7 +40,7 @@ def publish_workflow_reload(*, source: str = "api", plugin_name: str | None = No
     """广播重载信号到所有订阅进程（Gateway / Celery Worker）。"""
     client = get_redis()
     if not client:
-        logger.debug("Redis 不可用，仅本地重载")
+        log.debug("workflow_reload_redis_unavailable", action="local_reload_only", source=source)
         reload_all_registries(source=source)
         return False
     payload = {
@@ -45,9 +50,20 @@ def publish_workflow_reload(*, source: str = "api", plugin_name: str | None = No
     }
     try:
         client.publish(RELOAD_CHANNEL, json.dumps(payload, ensure_ascii=False))
+        log.info(
+            "workflow_reload_published",
+            source=source,
+            plugin_name=plugin_name,
+            channel=RELOAD_CHANNEL,
+        )
         return True
     except Exception as exc:
-        logger.warning("发布 workflow reload 失败: %s", exc)
+        log.warning(
+            "workflow_reload_publish_failed",
+            source=source,
+            plugin_name=plugin_name,
+            error=str(exc),
+        )
         reload_all_registries(source=source)
         return False
 
@@ -55,19 +71,26 @@ def publish_workflow_reload(*, source: str = "api", plugin_name: str | None = No
 def broadcast_workflow_reload(*, source: str = "api", plugin_name: str | None = None) -> dict[str, int]:
     """本地重载 + 广播到其他 worker。"""
     stats = reload_all_registries(source=source)
-    publish_workflow_reload(source=source, plugin_name=plugin_name)
+    published = publish_workflow_reload(source=source, plugin_name=plugin_name)
+    log.info(
+        "workflow_reload_broadcast",
+        source=source,
+        plugin_name=plugin_name,
+        published=published,
+        **stats,
+    )
     return stats
 
 
 def _listen_loop(on_reload: Callable[[dict], None] | None = None) -> None:
     client = get_redis()
     if not client:
-        logger.warning("Redis 不可用，跳过多 worker reload 监听")
+        log.warning("workflow_reload_listener_skipped", reason="redis_unavailable")
         return
     pubsub = client.pubsub(ignore_subscribe_messages=True)
     try:
         pubsub.subscribe(RELOAD_CHANNEL)
-        logger.info("已订阅 Workflow 热重载频道: %s", RELOAD_CHANNEL)
+        log.info("workflow_reload_listener_subscribed", channel=RELOAD_CHANNEL)
         while not _stop_event.is_set():
             message = pubsub.get_message(timeout=1.0)
             if not message or message.get("type") != "message":
@@ -76,12 +99,17 @@ def _listen_loop(on_reload: Callable[[dict], None] | None = None) -> None:
                 payload = json.loads(message["data"])
             except Exception:
                 payload = {"source": "unknown"}
+            log.info(
+                "workflow_reload_pubsub_received",
+                source=payload.get("source"),
+                plugin_name=payload.get("plugin_name"),
+            )
             reload_all_registries(source=str(payload.get("source") or "pubsub"))
             if on_reload:
                 on_reload(payload)
     except Exception as exc:
         if not _stop_event.is_set():
-            logger.warning("Workflow reload 监听异常: %s", exc)
+            log.warning("workflow_reload_listener_failed", error=str(exc), exc_info=exc)
     finally:
         try:
             pubsub.close()
@@ -93,6 +121,7 @@ def start_reload_listener(*, on_reload: Callable[[dict], None] | None = None) ->
     """启动后台线程监听 reload 广播（幂等）。"""
     global _listener_thread
     if _listener_thread and _listener_thread.is_alive():
+        log.debug("workflow_reload_listener_already_running")
         return
     _stop_event.clear()
 
@@ -101,6 +130,7 @@ def start_reload_listener(*, on_reload: Callable[[dict], None] | None = None) ->
 
     _listener_thread = threading.Thread(target=_runner, name="workflow-reload-listener", daemon=True)
     _listener_thread.start()
+    log.info("workflow_reload_listener_started")
 
 
 def stop_reload_listener() -> None:
@@ -110,3 +140,4 @@ def stop_reload_listener() -> None:
     if _listener_thread and _listener_thread.is_alive():
         _listener_thread.join(timeout=3)
     _listener_thread = None
+    log.info("workflow_reload_listener_stopped")

@@ -18,12 +18,14 @@ from langgraph.graph import END, StateGraph
 from src.agents.knowledge_qa.agent import knowledge_qa_node
 from src.common.config import get_settings
 from src.common.metrics import increment_counter, observe_histogram
+from src.core.logging import get_logger
 from src.infrastructure.db.postgres import get_postgres_saver
 from src.skill_system import get_skill_system
 from src.skills.registry import skill_registry
 from src.skills.skill_base import SkillDecision, SkillResult
 
 settings = get_settings()
+log = get_logger(__name__)
 
 AgentType = Literal["supervisor", "skill_executor", "knowledge_qa", "end"]
 
@@ -99,9 +101,9 @@ def supervisor_node(state: SupervisorState) -> SupervisorState:
     uploaded_file_path = state.get("uploaded_file_path")
     ticket_id = state.get("ticket_id", "")
 
-    print(f"\n[Supervisor Agent v4.0] source:{source} | Routing query: {query[:80]}...")
+    log.info("supervisor_v1_routing_begin", source=source, query_preview=query[:80])
 
-    print("   [Phase 1] Prefilter skills (embedding)...")
+    log.debug("supervisor_v1_phase1_prefilter")
     candidates_for_llm = skill_registry.get_top_skills_for_llm(query, top_n=5)
 
     if not candidates_for_llm or candidates_for_llm == "无可用技能":
@@ -112,7 +114,7 @@ def supervisor_node(state: SupervisorState) -> SupervisorState:
             fallback_to_rag=True
         )
         final_decision = "knowledge_qa"
-        print(f"   - Final routing decision -> {final_decision.upper()}")
+        log.info("supervisor_v1_routing_decision", next_agent=final_decision, reason="no_skill")
         increment_counter("skill_routing_total", tags={"result": "no_skill"})
         observe_histogram("skill_routing_duration_ms", (time.time() - t_start) * 1000)
         return {
@@ -123,7 +125,7 @@ def supervisor_node(state: SupervisorState) -> SupervisorState:
             "fallback_to_rag": decision.fallback_to_rag
         }
 
-    print("   [Phase 2] LLM decision (judge + params)...")
+    log.debug("supervisor_v1_phase2_llm_decision")
 
     prompt = f"""你是一个专业的运维助手，请在候选 Skill 中选择一个最合适的来处理用户请求，并提取执行所需参数。
 
@@ -155,14 +157,15 @@ def supervisor_node(state: SupervisorState) -> SupervisorState:
         # 使用 with_structured_output 强制 LLM 输出结构化数据
         decision = llm_with_structured_output.invoke(prompt)
 
-        print("   - LLM structured decision:")
-        print(f"     * reasoning: {decision.reasoning}")
-        print(f"     * skill_name: {decision.skill_name}")
-        print(f"     * parameters: {decision.parameters}")
-        print(f"     * fallback_to_rag: {decision.fallback_to_rag}")
+        log.info(
+            "supervisor_v1_llm_decision",
+            skill_name=decision.skill_name,
+            fallback_to_rag=decision.fallback_to_rag,
+            reasoning_preview=(decision.reasoning or "")[:120],
+        )
 
     except Exception as e:
-        print(f"   - LLM structured output failed, falling back to RAG: {e}")
+        log.warning("supervisor_v1_llm_decision_failed", error=str(e))
         # LLM 失败时直接走 RAG
         decision = SkillDecision(
             reasoning=f"LLM 调用失败，走 RAG 兜底: {str(e)[:80]}",
@@ -204,7 +207,7 @@ def supervisor_node(state: SupervisorState) -> SupervisorState:
                     refined.skill_name = selected_skill_name
                     decision = refined
         except Exception as e:
-            print(f"   - Skill instruction refinement skipped: {e}")
+            log.debug("supervisor_v1_skill_refinement_skipped", error=str(e))
 
     # 确定路由目标
     if decision.skill_name:
@@ -230,7 +233,7 @@ def supervisor_node(state: SupervisorState) -> SupervisorState:
                 if "ticket_id" in keys and not decision.parameters.get("ticket_id"):
                     decision.parameters["ticket_id"] = ticket_id
         except Exception as e:
-            print(f"   - Context merge skipped: {e}")
+            log.debug("supervisor_v1_context_merge_skipped", error=str(e))
 
     if decision.skill_name and not decision.fallback_to_rag:
         increment_counter("skill_routing_total", tags={"result": "skill_hit"})
@@ -238,7 +241,7 @@ def supervisor_node(state: SupervisorState) -> SupervisorState:
         increment_counter("skill_routing_total", tags={"result": "rag_fallback"})
 
     observe_histogram("skill_routing_duration_ms", (time.time() - t_start) * 1000)
-    print(f"   - Final routing decision -> {final_decision.upper()}")
+    log.info("supervisor_v1_routing_decision", next_agent=final_decision)
 
     return {
         **state,
@@ -274,7 +277,7 @@ def skill_executor_node(state: SupervisorState) -> SupervisorState:
     decision = state.get("skill_decision")
 
     if not decision:
-        print("[Skill Executor] No skill decision found, fallback to RAG")
+        log.warning("supervisor_v1_skill_executor_no_decision")
         increment_counter("skill_execution_total", tags={"result": "no_decision"})
         return {
             **state,
@@ -282,15 +285,18 @@ def skill_executor_node(state: SupervisorState) -> SupervisorState:
             "fallback_to_rag": True
         }
 
-    print(f"\n[Skill Executor] Async executing skill: {decision.skill_name}")
-    print(f"               Parameters: {decision.parameters}")
+    log.info(
+        "supervisor_v1_skill_executor_begin",
+        skill_name=decision.skill_name,
+        parameters=decision.parameters,
+    )
 
     # 权限检查（非阻断：仅记录警告日志，不拦截正常请求）
     try:
         from src.skill_system.security import get_security_manager
         auth_ok = get_security_manager().check_permission(decision.skill_name, "USER")
         if not auth_ok:
-            print(f"[Skill Executor] WARN: 权限不足 ({decision.skill_name})，继续执行")
+            log.warning("supervisor_v1_skill_executor_unauthorized", skill_name=decision.skill_name)
             increment_counter("skill_execution_total", tags={"result": "unauthorized_pass"})
     except Exception:
         pass  # 权限系统不可用时继续正常运行
@@ -338,9 +344,13 @@ def skill_executor_node(state: SupervisorState) -> SupervisorState:
         except RuntimeError:
             result = _asyncio.run(skill_registry.async_execute_skill(decision))
 
-        print(f"[Skill Executor] Result: success={result.success}, message={result.message}")
-        if result.download_url:
-            print(f"[Skill Executor] Download URL: {result.download_url}")
+        log.info(
+            "supervisor_v1_skill_executor_complete",
+            skill_name=decision.skill_name,
+            success=result.success,
+            message_preview=(result.message or "")[:120],
+            download_url=result.download_url,
+        )
 
         # 提取 Celery task_id（如果存在）
         celery_task_id = None
@@ -393,7 +403,12 @@ def skill_executor_node(state: SupervisorState) -> SupervisorState:
 
     except Exception as e:
         error_msg = f"技能执行异常: {str(e)}"
-        print(f"[Skill Executor] Error: {error_msg}")
+        log.error(
+            "supervisor_v1_skill_executor_failed",
+            skill_name=decision.skill_name if decision else None,
+            error=error_msg,
+            exc_info=e,
+        )
 
         increment_counter("skill_execution_total", tags={"result": "exception"})
         observe_histogram("skill_execution_duration_ms", (time.time() - t_start) * 1000)
@@ -430,15 +445,13 @@ def knowledge_qa_node_wrapper(state: SupervisorState) -> SupervisorState:
     - knowledge_references: RAG 检索引用列表
     - next_agent: end（对话终止）
     """
-    print("\n[RAG Node] Processing query through RAG")
+    log.debug("supervisor_v1_rag_node_begin")
 
     try:
         result = knowledge_qa_node(state)
 
-        if "messages" in result:
-            print("[RAG Node] Messages updated successfully")
-        if "knowledge_references" in result:
-            print(f"[RAG Node] References found: {len(result.get('knowledge_references', []))}")
+        ref_count = len(result.get("knowledge_references") or [])
+        log.info("supervisor_v1_rag_node_complete", reference_count=ref_count)
 
         return {
             **state,
@@ -447,7 +460,7 @@ def knowledge_qa_node_wrapper(state: SupervisorState) -> SupervisorState:
             "agent_type": "knowledge_qa"
         }
     except Exception as e:
-        print(f"[RAG Node] Error: {str(e)}")
+        log.error("supervisor_v1_rag_node_failed", error=str(e), exc_info=e)
 
         new_message = AIMessage(content=f"[FAIL] RAG query failed: {str(e)}\n\nPlease try again later or contact administrator.")
 
@@ -543,14 +556,11 @@ def build_supervisor_graph(checkpointer=None):
     if checkpointer is None:
         from langgraph.checkpoint.memory import MemorySaver
         checkpointer = MemorySaver()
-        print("[INFO] [Supervisor] Using Memory Checkpointer (Dev Mode)")
-        print("[INFO] [Supervisor] For Production: Set USE_POSTGRES=true in .env")
+        log.info("supervisor_v1_checkpointer_memory")
 
     # 编译图并绑定 checkpointer
     compiled = workflow.compile(checkpointer=checkpointer)
-    print("\n" + "=" * 60)
-    print("[OK] Supervisor Agent v2.0 (Skill Registry) compiled successfully!")
-    print("=" * 60)
+    log.info("supervisor_v1_graph_compiled")
     return compiled
 
 
@@ -565,8 +575,7 @@ def get_supervisor_graph():
         postgres_saver = get_postgres_saver()
         return build_supervisor_graph(checkpointer=postgres_saver)
     except Exception as e:
-        print(f"[WARN] PostgreSQL checkpointer not available: {e}")
-        print("[WARN] Falling back to MemorySaver (sessions will not persist)")
+        log.warning("supervisor_v1_postgres_checkpointer_unavailable", error=str(e))
         return build_supervisor_graph()
 
 
@@ -590,37 +599,34 @@ def test_supervisor_graph():
     使用方法：
     python -c "from src.agents.supervisor.graph import test_supervisor_graph; test_supervisor_graph()"
     """
-    print("=" * 60)
-    print("测试 Supervisor Graph v2.0")
-    print("=" * 60)
+    log.info("supervisor_v1_test_begin")
 
     graph = get_supervisor_graph()
 
-    print("\n[1] 测试设备列表查询...")
+    log.info("supervisor_v1_test_step", step=1, description="设备列表查询")
     state = graph.invoke({
         "messages": [HumanMessage(content="列出所有设备")],
         "source": "chat"
     })
-    print("    [OK] Execution completed")
-    print(f"    [OK] next_agent: {state.get('next_agent')}")
+    log.info("supervisor_v1_test_step_done", step=1, next_agent=state.get("next_agent"))
 
-    print("\n[2] Testing skill decision...")
+    log.info("supervisor_v1_test_step", step=2, description="skill decision")
     if state.get("skill_decision"):
         decision = state["skill_decision"]
-        print(f"    [OK] skill_name: {decision.skill_name}")
-        print(f"    [OK] reasoning: {decision.reasoning[:80]}...")
+        log.info(
+            "supervisor_v1_test_skill_decision",
+            skill_name=decision.skill_name,
+            reasoning_preview=(decision.reasoning or "")[:80],
+        )
 
-    print("\n[3] Testing RAG Q&A...")
+    log.info("supervisor_v1_test_step", step=3, description="RAG Q&A")
     state2 = graph.invoke({
         "messages": [HumanMessage(content="what is firewall")],
         "source": "chat"
     })
-    print("    [OK] Execution completed")
-    print(f"    [OK] next_agent: {state2.get('next_agent')}")
+    log.info("supervisor_v1_test_step_done", step=3, next_agent=state2.get("next_agent"))
 
-    print("\n" + "=" * 60)
-    print("测试完成!")
-    print("=" * 60)
+    log.info("supervisor_v1_test_complete")
 
 
 if __name__ == "__main__":

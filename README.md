@@ -87,7 +87,7 @@ flowchart TB
 | React | 3000 | 聊天、Skill 管理、系统状态、登录与账户管理 |
 | Django BFF | 8001 | 统一 `/api` 入口、JWT 认证、代理 FastAPI、WebSocket 转发 |
 
-多用户认证、RBAC 与 BFF 可信头规范见 **[docs/auth-rbac-plan.md](docs/auth-rbac-plan.md)**；Langfuse + SSE 流式 Trace 见 **[docs/langfuse-sse-plan.md](docs/langfuse-sse-plan.md)**。演示账号：`admin/admin123` · `operator/operator123` · `viewer/viewer123`。
+多用户认证、RBAC 与 BFF 可信头规范见 **[docs/auth-rbac-plan.md](docs/auth-rbac-plan.md)**；Langfuse + SSE 流式 Trace 见 **[docs/langfuse-sse-plan.md](docs/langfuse-sse-plan.md)**；日志与排障见 **[docs/08_日志规范 & 日志字典](docs/08_日志规范%20&%20日志字典.md)**。演示账号：`admin/admin123` · `operator/operator123` · `viewer/viewer123`。
 
 ### API 与编排层
 | 组件 | 端口 | 职责 |
@@ -269,9 +269,10 @@ netops-agent/
 │   └── validate_skill.py      # Skill 格式验证工具
 ├── tests/                     # 统一测试目录
 │   └── skill_system/          # 7 个测试文件, 62 个用例
-├── docs/                      # 文档 + ADR
-│   ├── adr/                   # 架构决策记录
-│   └── SKILL_CREATION_GUIDE.md
+├── docs/                      # 项目文档（01–11 正式系列 + ADR）
+│   ├── 01_系统架构设计.md
+│   ├── …                      # 见 docs/README.md
+│   └── adr/                   # 架构决策记录
 ├── knowledge_base/            # RAG 原始文档（更新后需重建 Chroma 索引）
 ├── vectorstore/chroma_db/     # RAG 向量库（Chroma 持久化）
 ├── scripts/test/              # 测试环境 install / start / stop
@@ -313,11 +314,32 @@ python scripts/validate_skill.py --all        # 所有 Skill 通过
 
 ## 文档
 
-- [Skill 创建指南](docs/SKILL_CREATION_GUIDE.md)
-- [架构决策记录](docs/adr/)
-- [启动手册](docs/启动手册.md)
-- [部署脚本说明](scripts/README.md)
-- [Web 开发文档](web/README.md)
+**生产一键部署：** [scripts/prod/README.md](scripts/prod/README.md) · [生产上线清单](docs/13_生产上线清单.md)
+
+```powershell
+copy .env.example .env
+.\scripts\prod\start.ps1
+```
+
+完整文档索引见 **[docs/README.md](docs/README.md)**。
+
+| 编号 | 文档 |
+|------|------|
+| 01 | [系统架构设计](docs/01_系统架构设计.md) |
+| 02 | [概要与详细设计](docs/02_概要与详细设计.md) |
+| 03 | [数据库设计 & 数据字典](docs/03_数据库设计%20&%20数据字典.md) |
+| 04 | [API 接口文档](docs/04_API%20接口文档.md) |
+| 05 | [编码 & 工程规范](docs/05_编码%20&%20工程规范.md) |
+| 06 | [环境 & 编译构建说明](docs/06_环境%20&%20编译构建说明.md) |
+| 07 | [系统配置说明](docs/07_系统配置说明.md) |
+| 08 | [日志规范 & 日志字典](docs/08_日志规范%20&%20日志字典.md) |
+| 09 | [错误码定义文档](docs/09_错误码定义文档.md) |
+| 10 | [部署安装手册](docs/10_部署安装手册.md) |
+| 11 | [运维技术手册 & 故障排查](docs/11_运维技术手册%20&%20故障排查.md) |
+| 12 | [Supervisor 路由与 Skill 执行流程](docs/12_Supervisor路由与Skill执行流程.md) |
+| 13 | [生产上线清单](docs/13_生产上线清单.md) |
+
+**专项指南：** [Skill 创建指南](docs/SKILL_CREATION_GUIDE.md) · [测试手册](docs/测试手册.md) · [认证 RBAC](docs/auth-rbac-plan.md) · [Langfuse SSE](docs/langfuse-sse-plan.md) · [ADR](docs/adr/)
 
 ## License
 

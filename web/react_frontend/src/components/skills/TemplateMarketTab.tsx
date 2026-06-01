@@ -119,29 +119,35 @@ const TemplateMarketTab: React.FC = () => {
         <div className="grok-skill-grid">
           {filtered.map((tpl) => (
             <Card key={tpl.id} className="grok-skill-card" bordered={false}>
-              <div className="grok-skill-card-title">{tpl.title}</div>
-              <Paragraph type="secondary" ellipsis={{ rows: 2 }}>
-                {tpl.description || '—'}
-              </Paragraph>
-              <div className="grok-chip-row">
-                <GrokChip>{tpl.category}</GrokChip>
-                {tpl.featured && <Tag color="gold">精选</Tag>}
-                {tpl.tags?.map((tag) => (
-                  <Tag key={tag}>{tag}</Tag>
-                ))}
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  使用 {tpl.use_count} 次
-                </Text>
-              </div>
-              <div className="grok-skill-card-btns" style={{ marginTop: 12 }}>
-                <GrokToolBtn
-                  primary
-                  icon={<RocketOutlined />}
-                  disabled={usingId === tpl.id}
-                  onClick={() => handleUseTemplate(tpl)}
-                >
-                  {usingId === tpl.id ? '加载中…' : '使用模板'}
-                </GrokToolBtn>
+              <div className="grok-skill-card-inner">
+                <div className="grok-skill-card-main">
+                  <div className="grok-skill-card-title">{tpl.title}</div>
+                  <Paragraph type="secondary" className="grok-skill-card-desc" ellipsis={{ rows: 2 }}>
+                    {tpl.description || '—'}
+                  </Paragraph>
+                  <div className="grok-chip-row grok-skill-card-tags">
+                    <GrokChip>{tpl.category}</GrokChip>
+                    {tpl.featured && <Tag color="gold">精选</Tag>}
+                    {tpl.tags?.map((tag) => (
+                      <Tag key={tag}>{tag}</Tag>
+                    ))}
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      使用 {tpl.use_count} 次
+                    </Text>
+                  </div>
+                </div>
+                <div className="grok-skill-card-footer">
+                  <div className="grok-skill-card-btns">
+                    <GrokToolBtn
+                      primary
+                      icon={<RocketOutlined />}
+                      disabled={usingId === tpl.id}
+                      onClick={() => handleUseTemplate(tpl)}
+                    >
+                      {usingId === tpl.id ? '加载中…' : '使用模板'}
+                    </GrokToolBtn>
+                  </div>
+                </div>
               </div>
             </Card>
           ))}

@@ -1,0 +1,22 @@
+workflow: '2'
+priority: 50
+description: 王八蛋。工单号REQ
+match:
+  require_any:
+  - 王八蛋
+  - 工单号
+  require_any_secondary:
+  - LLM
+  - 分析
+context_defaults:
+  analysis_focus: summary
+response_template: '[OK] 已启动 Workflow
+
+
+  - **流程 ID**: `{run_id}`
+
+  - **工单**: {ticket_id}
+
+  - **步骤**: {workflow_description}
+
+  '

@@ -1,12 +1,12 @@
 import React from 'react'
 
-const URL_PATTERN = /(https?:\/\/[^\s<>"')\]]+)/g
+const URL_PATTERN = /(https?:\/\/[^\s<>"')\]]+|\/api\/[^\s<>"')\]]+)/g
 
 /** 将文本中的 http(s) URL 渲染为可点击链接 */
 export function linkifyText(text: string): React.ReactNode[] {
   const parts = text.split(URL_PATTERN)
   return parts.map((part, index) => {
-    if (/^https?:\/\//.test(part)) {
+    if (/^https?:\/\//.test(part) || part.startsWith('/api/')) {
       const label = part.length > 72 ? `${part.slice(0, 69)}...` : part
       return (
         <a
@@ -33,11 +33,11 @@ export function linkifyText(text: string): React.ReactNode[] {
 export function extractDownloadUrlFromContent(content: string): string | undefined {
   const md = content.match(/\[点击下载[^\]]*\]\((https?:\/\/[^)]+)\)/i)
   if (md?.[1]) return md[1]
-  const plain = content.match(/(?:下载|download)[：:\s]+(https?:\/\/\S+)/i)
+  const plain = content.match(/(?:下载|download)[：:\s]+((?:https?:\/\/|\/api\/)\S+)/i)
   return plain?.[1]?.replace(/[)\],.]+$/, '')
 }
 
-const MD_LINK_PATTERN = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g
+const MD_LINK_PATTERN = /\[([^\]]+)\]\((https?:\/\/[^)]+|\/api\/[^)]+)\)/g
 
 /** 渲染助手消息：支持 Markdown 链接 + 纯 URL 自动链接 */
 export function renderAssistantContent(text: string): React.ReactNode[] {

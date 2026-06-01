@@ -8,7 +8,6 @@ Supervisor v2 — 高级协同模式
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import re
 import time
@@ -20,6 +19,9 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
 from src.agents.knowledge_qa.agent import knowledge_qa_node
+from src.agents.supervisor.heuristic_plan import (
+    build_heuristic_execution_plan as _build_heuristic_execution_plan,
+)
 from src.agents.supervisor.models_v2 import (
     ExecutionPlan,
     ExecutionPlanModel,
@@ -28,6 +30,7 @@ from src.agents.supervisor.models_v2 import (
 from src.common.config import get_settings
 from src.common.metrics import increment_counter, observe_histogram
 from src.common.ticket_utils import extract_ticket_id as _extract_ticket_id
+from src.core.logging import get_logger
 from src.infrastructure.db.postgres import get_postgres_saver
 from src.skill_system import get_skill_system
 from src.skill_system.router import SkillMatch
@@ -35,7 +38,7 @@ from src.skills.registry import skill_registry
 from src.skills.skill_base import SkillDecision, SkillResult
 
 settings = get_settings()
-logger = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 AgentType = Literal["supervisor", "skill_executor", "knowledge_qa", "workflow_starter", "end"]
 PRE_PROCESS_TOP_K = 5
@@ -94,6 +97,7 @@ class SupervisorStateV2(TypedDict):
     user_role: str | None
     workflow_type: str | None
     workflow_run_id: str | None
+    langfuse_parent_trace_id: str | None
 
 
 def _get_query(state: SupervisorStateV2) -> str:
@@ -194,129 +198,17 @@ def _filter_skill_matches(query: str, matches: list[SkillMatch]) -> list[SkillMa
     return filtered
 
 
-_SEQUENTIAL_INTENT = re.compile(
-    r"之后|然后|接着|完成后|先.+?后|再.{0,12}(?:巡检|备份|生成|检查)"
-)
+def _resolve_workflow_intent(query: str, source: str | None):
+    """匹配 CHAT.intent 插件；话术命中即走 Workflow（工单号由 workflow_starter 校验）。"""
+    from src.core.plugins.chat_intent import find_matching_intents
 
-
-def _trigger_position_in_query(query: str, match: SkillMatch) -> int:
-    """触发词在用户话术中首次出现的位置（用于多 Skill 排序）。"""
-    reason = match.reason or ""
-    trigger = ""
-    for sep in ("匹配触发词:", "匹配触发词："):
-        if sep in reason:
-            trigger = reason.split(sep, 1)[1].strip()
-            break
-    if trigger:
-        pos = query.lower().find(trigger.lower())
-        if pos >= 0:
-            return pos
-    return 10**9
-
-
-def _ordered_trigger_skills(
-    query: str,
-    loaded_skills: list[str],
-    skill_matches: list[SkillMatch] | None,
-) -> list[str]:
-    """按话术中触发词出现顺序排列所有触发词命中的 Skill。"""
-    matches_by_name = {m.skill_name: m for m in (skill_matches or [])}
-    triggered = [
-        name
-        for name in loaded_skills
-        if (match := matches_by_name.get(name)) and match.match_type == "trigger"
-    ]
-    triggered.sort(key=lambda name: _trigger_position_in_query(query, matches_by_name[name]))
-    return triggered
-
-
-def _extract_device_filter_params(query: str) -> dict[str, Any]:
-    """从用户话术中提取设备备份/巡检过滤条件（规则调度免 LLM）。"""
-    params: dict[str, Any] = {}
-    ip_match = re.search(r"\d{1,3}(?:\.\d{1,3}){3}", query)
-    if ip_match:
-        params["ip"] = ip_match.group(0)
-    for group in ("生产环境", "测试环境", "DMZ区域"):
-        if group in query:
-            params["group"] = group
-            break
-    group_match = re.search(r"(?:分组|group)[为是:\s]+([^\s，,。.]+)", query, re.IGNORECASE)
-    if group_match:
-        params["group"] = group_match.group(1)
-    return params
+    matched = find_matching_intents(query, source)
+    return matched[0] if matched else None
 
 
 def _match_workflow_intent(query: str, source: str | None):
-    """从 Workflow 插件包匹配聊天/来源应启动的 Workflow。"""
-    from src.core.plugins.chat_intent import match_chat_workflow
-
-    return match_chat_workflow(query, source)
-
-
-def _build_heuristic_skill_params(
-    skill_name: str,
-    query: str,
-    uploaded_file_path: str | None,
-    ticket_id: str | None,
-) -> dict[str, Any]:
-    params: dict[str, Any] = {}
-    if ticket_id:
-        params["ticket_id"] = ticket_id
-    if skill_name == "firewall-policy-generator":
-        if uploaded_file_path:
-            params["policy_file_url"] = uploaded_file_path
-        params.setdefault("ticket_title", "防火墙策略生成")
-    elif skill_name == "official-document-writing":
-        params.setdefault("user_query", query)
-        params.setdefault("action", "write")
-        for doc_type in ("请示", "通知", "函", "报告", "总结", "纪要", "决定"):
-            if doc_type in query:
-                params.setdefault("document_type", doc_type)
-                break
-    elif skill_name in ("device-backup", "device-patrol"):
-        params["filter_params"] = _extract_device_filter_params(query)
-    return params
-
-
-def _build_heuristic_execution_plan(
-    query: str,
-    loaded_skills: list[str],
-    skill_matches: list[SkillMatch] | None,
-    uploaded_file_path: str | None,
-) -> ExecutionPlan | None:
-    """
-    不调用 LLM 的规则化 ExecutionPlan（触发词已匹配时使用）。
-    支持多 Skill：按话术中触发词顺序编排；含「之后/然后」等词时建立 depends_on 链。
-    """
-    ordered = _ordered_trigger_skills(query, loaded_skills, skill_matches)
-    if not ordered:
-        return None
-
-    ticket_id = _extract_ticket_id(query)
-    matches_by_name = {m.skill_name: m for m in (skill_matches or [])}
-    sequential = len(ordered) > 1 and bool(_SEQUENTIAL_INTENT.search(query))
-
-    tasks: list[SkillTaskSpec] = []
-    prev: str | None = None
-    for name in ordered:
-        params = _build_heuristic_skill_params(name, query, uploaded_file_path, ticket_id)
-        depends_on = [prev] if sequential and prev else []
-        tasks.append(SkillTaskSpec(skill_name=name, parameters=params, depends_on=depends_on))
-        prev = name
-
-    reasons = [matches_by_name[n].reason for n in ordered if matches_by_name.get(n)]
-    if len(ordered) > 1:
-        mode_hint = "顺序" if sequential else "并行"
-        reasoning = f"规则调度（免 LLM，{mode_hint}）: " + " → ".join(reasons)
-    else:
-        reasoning = f"规则调度（免 LLM）: {reasons[0] if reasons else '已加载 Skill 指令'}"
-
-    return ExecutionPlan(
-        reasoning=reasoning,
-        skills=tasks,
-        execution_mode="parallel",
-        fallback_to_rag=False,
-    )
+    """兼容旧调用：等价于 _resolve_workflow_intent。"""
+    return _resolve_workflow_intent(query, source)
 
 
 def _merge_params_with_deps(
@@ -474,14 +366,16 @@ def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
     """SemanticRouter 多匹配 + SkillLoader 批量加载（Progressive Disclosure）。"""
     t_start = time.time()
     query = _get_query(state)
-    print(f"\n[Supervisor v2] pre_process_node | query: {query[:80]}...", flush=True)
+    log.info("supervisor_v2_pre_process", query_preview=query[:80])
 
     raw_matches = _route_skills(query, top_k=PRE_PROCESS_TOP_K)
     matches = _filter_skill_matches(query, raw_matches)
     if len(matches) < len(raw_matches):
-        print(
-            f"   pre_process 过滤弱匹配 {len(raw_matches)} → {len(matches)} "
-            f"(知识问句或语义低于 {SEMANTIC_SKILL_MIN_CONFIDENCE})"
+        log.info(
+            "supervisor_v2_pre_process_filtered",
+            raw_count=len(raw_matches),
+            kept_count=len(matches),
+            min_confidence=SEMANTIC_SKILL_MIN_CONFIDENCE,
         )
     skill_system = get_skill_system()
     skill_instructions: dict[str, str] = {}
@@ -494,24 +388,26 @@ def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
                 skill_instructions[match.skill_name] = content
                 loaded_skills.append(match.skill_name)
             else:
-                logger.warning(
-                    "pre_process: Skill %s 指令为空 (match=%s)",
-                    match.skill_name,
-                    match.match_type,
+                log.warning(
+                    "supervisor_v2_pre_process_skill_empty",
+                    skill_name=match.skill_name,
+                    match_type=match.match_type,
                 )
         except Exception as exc:
-            logger.exception(
-                "pre_process: 加载 Skill %s 失败: %s",
-                match.skill_name,
-                exc,
+            log.exception(
+                "supervisor_v2_pre_process_skill_load_failed",
+                skill_name=match.skill_name,
+                error=str(exc),
             )
 
     duration_ms = (time.time() - t_start) * 1000
     observe_histogram("supervisor_v2_pre_process_duration_ms", duration_ms)
     increment_counter("supervisor_v2_pre_process_total", tags={"loaded_count": str(len(loaded_skills))})
-    print(
-        f"   pre_process_node 匹配 {len(matches)} 个 / 加载 {len(loaded_skills)} 个 Skill，"
-        f"耗时 {duration_ms:.0f}ms"
+    log.info(
+        "supervisor_v2_pre_process_complete",
+        match_count=len(matches),
+        loaded_count=len(loaded_skills),
+        duration_ms=int(duration_ms),
     )
 
     ticket_id = _extract_ticket_id(query)
@@ -540,11 +436,11 @@ def supervisor_node_v2(state: SupervisorStateV2) -> SupervisorStateV2:
     skill_instructions = state.get("skill_instructions") or {}
     loaded_skills = state.get("loaded_skills") or []
 
-    print(f"\n[Supervisor v2] supervisor_node | 已加载 Skill: {loaded_skills}")
+    log.info("supervisor_v2_supervisor_begin", loaded_skills=loaded_skills)
 
-    workflow_intent = _match_workflow_intent(query, state.get("source"))
+    workflow_intent = _resolve_workflow_intent(query, state.get("source"))
     if workflow_intent:
-        print(f"   识别 Workflow 插件 → {workflow_intent.workflow}")
+        log.info("supervisor_v2_workflow_intent_matched", workflow=workflow_intent.workflow)
         increment_counter("supervisor_v2_plan_total", tags={"result": "workflow"})
         observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
         return {
@@ -579,7 +475,7 @@ def supervisor_node_v2(state: SupervisorStateV2) -> SupervisorStateV2:
             f"{t.skill_name}{'←' + ','.join(t.depends_on) if t.depends_on else ''}"
             for t in heuristic_plan.skills
         )
-        print(f"   ExecutionPlan: 规则调度 → {skill_names}")
+        log.info("supervisor_v2_execution_plan_rule", skill_chain=skill_names)
         increment_counter("supervisor_v2_plan_total", tags={"result": "rule_plan"})
         observe_histogram("supervisor_v2_supervisor_duration_ms", (time.time() - t_start) * 1000)
         return {
@@ -620,13 +516,20 @@ reasoning、skills（skill_name/parameters/depends_on）、execution_mode、cond
     try:
         plan_model = llm_with_execution_plan.invoke(prompt)
         plan = ExecutionPlan.from_model(plan_model)
-        print(f"   ExecutionPlan: mode={plan.execution_mode}, skills={[s.skill_name for s in plan.skills]}")
+        log.info(
+            "supervisor_v2_execution_plan_llm",
+            execution_mode=plan.execution_mode,
+            skills=[s.skill_name for s in plan.skills],
+        )
     except Exception as exc:
-        print(f"   ExecutionPlan LLM 失败: {exc}")
+        log.warning("supervisor_v2_execution_plan_llm_failed", error=str(exc))
         if heuristic_plan and heuristic_plan.skills:
             plan = heuristic_plan
             plan.reasoning = f"{plan.reasoning}（LLM 不可用: {str(exc)[:80]}）"
-            print(f"   回退规则调度 → {plan.skills[0].skill_name}")
+            log.info(
+                "supervisor_v2_execution_plan_fallback",
+                skill_name=plan.skills[0].skill_name,
+            )
         else:
             plan = ExecutionPlan(
                 reasoning=f"LLM 决策失败: {str(exc)[:80]}",
@@ -658,11 +561,11 @@ def orchestrator_dispatch(state: SupervisorStateV2):
 
     tasks = _filter_conditional_tasks(plan, state)
     if not tasks:
-        print("[Supervisor v2] orchestrator: 无可执行任务 → final_aggregator")
+        log.info("supervisor_v2_orchestrator_no_tasks")
         return "final_aggregator"
 
     if _detect_dependency_cycle(tasks):
-        logger.error("[Supervisor v2] orchestrator: 检测到 depends_on 循环依赖")
+        log.error("supervisor_v2_orchestrator_dependency_cycle")
         return "final_aggregator"
 
     completed = set((state.get("intermediate_results") or {}).keys())
@@ -671,18 +574,18 @@ def orchestrator_dispatch(state: SupervisorStateV2):
     if plan.execution_mode == "parallel":
         pending = [t for t in tasks if t.skill_name not in completed]
         if not pending:
-            print(
-                f"[Supervisor v2] orchestrator: Skill 已在 intermediate_results 中 {completed}，"
-                "跳过 fan-out（若为本轮新消息仍出现，请确认 pre_process 已清空 checkpoint）"
+            log.debug(
+                "supervisor_v2_orchestrator_skills_cached",
+                completed=list(completed),
             )
             return "final_aggregator"
 
         runnable = _parallel_runnable_tasks(pending, completed, intermediate)
         if not runnable:
-            print("[Supervisor v2] orchestrator: 并行任务被依赖阻塞或前置失败 → final_aggregator")
+            log.info("supervisor_v2_orchestrator_parallel_blocked")
             return "final_aggregator"
 
-        print(f"[Supervisor v2] orchestrator fan-out 并行执行 {len(runnable)} 个 Skill")
+        log.info("supervisor_v2_orchestrator_parallel_fanout", skill_count=len(runnable))
         increment_counter(
             "supervisor_v2_orchestrator_fanout_total",
             tags={"mode": "parallel", "count": str(len(runnable))},
@@ -697,7 +600,7 @@ def orchestrator_dispatch(state: SupervisorStateV2):
     if not next_task:
         return "final_aggregator"
 
-    print(f"[Supervisor v2] orchestrator fan-out 顺序执行 Skill: {next_task.skill_name}")
+    log.info("supervisor_v2_orchestrator_sequential_fanout", skill_name=next_task.skill_name)
     increment_counter("supervisor_v2_orchestrator_fanout_total", tags={"mode": plan.execution_mode, "count": "1"})
     return Send("skill_executor_v2", _build_send_payload(state, next_task))
 
@@ -723,11 +626,11 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
     skill_name = (task.skill_name if task else None) or (decision.skill_name if decision else None)
 
     if not decision or not skill_name:
-        print("[Supervisor v2] skill_executor_v2: 无决策，跳过")
+        log.info("supervisor_v2_skill_executor_skip")
         return state
 
-    print(f"\n[Supervisor v2] skill_executor_v2 | Skill: {skill_name}", flush=True)
-    print(f"               Parameters: {decision.parameters}", flush=True)
+    log.info("supervisor_v2_skill_executor_start", skill_name=skill_name)
+    log.debug("supervisor_v2_skill_executor_params", skill_name=skill_name, parameters=decision.parameters)
 
     try:
         from src.auth.rbac import role_to_permission_level
@@ -738,7 +641,7 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
         user_level = PermissionLevel(perm_name) if perm_name in PermissionLevel._value2member_map_ else PermissionLevel.USER
         if not get_security_manager().check_permission(skill_name, user_level):
             msg = f"角色 {role} 无权执行 Skill: {skill_name}"
-            print(f"[Supervisor v2] 拒绝执行: {msg}")
+            log.warning("supervisor_v2_skill_executor_denied", skill_name=skill_name, role=role)
             return {
                 "intermediate_results": {
                     skill_name: {"success": False, "message": msg, "error": msg},
@@ -760,14 +663,24 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
         tag = "success" if result.success else "error"
         increment_counter("supervisor_v2_skill_execution_total", tags={"result": tag, "skill": skill_name})
         observe_histogram("supervisor_v2_skill_execution_duration_ms", (time.time() - t_start) * 1000)
-        print(f"[Supervisor v2] skill_executor_v2 完成: {skill_name} success={result.success}")
+        log.info(
+            "supervisor_v2_skill_executor_complete",
+            skill_name=skill_name,
+            success=result.success,
+            duration_ms=int((time.time() - t_start) * 1000),
+        )
 
         return {
             "intermediate_results": {skill_name: payload},
         }
     except Exception as exc:
         error_msg = f"技能执行异常: {exc}"
-        print(f"[Supervisor v2] skill_executor_v2 失败: {error_msg}")
+        log.error(
+            "supervisor_v2_skill_executor_failed",
+            skill_name=skill_name,
+            error=error_msg,
+            exc_info=exc,
+        )
         increment_counter("supervisor_v2_skill_execution_total", tags={"result": "exception", "skill": skill_name or "unknown"})
         return {
             "intermediate_results": {skill_name: {"success": False, "message": error_msg, "error": error_msg}},
@@ -776,7 +689,7 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
 
 def route_after_executor_v2(state: SupervisorStateV2) -> str:
     if _should_fallback_to_rag_after_skills(state):
-        print("[Supervisor v2] 全部 Skill 失败，回退 knowledge_qa")
+        log.info("supervisor_v2_route_fallback_rag")
         return "knowledge_qa"
 
     plan = state.get("execution_plan")
@@ -835,12 +748,18 @@ def workflow_starter_node(state: SupervisorStateV2) -> SupervisorStateV2:
         source=state.get("source") or "chat",
         user_id=state.get("user_id"),
         thread_id=state.get("thread_id"),
+        parent_trace_id=state.get("langfuse_parent_trace_id"),
     )
     if intent:
         content = format_workflow_start_message(intent, run_id, context)
     else:
         content = f"[OK] 已启动 Workflow `{workflow_name}`\n\n- **流程 ID**: `{run_id}`"
-    print(f"[Supervisor v2] workflow_starter | workflow={workflow_name} run_id={run_id}")
+    log.info(
+        "supervisor_v2_workflow_started",
+        workflow=workflow_name,
+        run_id=run_id,
+        ticket_id=context.get("ticket_id"),
+    )
     return {
         **state,
         "workflow_run_id": run_id,
@@ -878,7 +797,7 @@ def final_aggregator_node(state: SupervisorStateV2) -> SupervisorStateV2:
         lines.append("未产生 Skill 执行结果。")
 
     content = "\n".join(lines)
-    print(f"[Supervisor v2] final_aggregator | 聚合 {len(results)} 个 Skill 结果")
+    log.info("supervisor_v2_final_aggregator", result_count=len(results))
 
     return {
         **state,
@@ -904,12 +823,12 @@ def _format_rag_failure_message(exc: Exception) -> str:
 
 
 def knowledge_qa_node_wrapper_v2(state: SupervisorStateV2) -> SupervisorStateV2:
-    print("\n[Supervisor v2] knowledge_qa_node")
+    log.info("supervisor_v2_knowledge_qa_begin")
     try:
         result = knowledge_qa_node(state)
         return {**state, **result, "next_agent": "end", "agent_type": "knowledge_qa"}
     except Exception as exc:
-        logger.exception("knowledge_qa 失败")
+        log.exception("supervisor_v2_knowledge_qa_failed", error=str(exc))
         return {
             **state,
             "messages": state["messages"] + [AIMessage(content=_format_rag_failure_message(exc))],
@@ -964,12 +883,10 @@ def build_supervisor_graph_v2(checkpointer=None):
         from langgraph.checkpoint.memory import MemorySaver
 
         checkpointer = MemorySaver()
-        print("[INFO] [Supervisor v2] Using Memory Checkpointer (Dev Mode)")
+        log.info("supervisor_v2_memory_checkpointer")
 
     compiled = workflow.compile(checkpointer=checkpointer)
-    print("\n" + "=" * 60)
-    print("[OK] Supervisor Agent v2 (Advanced Collaboration) compiled successfully!")
-    print("=" * 60)
+    log.info("supervisor_v2_graph_compiled")
     return compiled
 
 
@@ -977,7 +894,7 @@ def get_supervisor_graph_v2():
     try:
         return build_supervisor_graph_v2(checkpointer=get_postgres_saver())
     except Exception as exc:
-        print(f"[WARN] PostgreSQL checkpointer not available (v2): {exc}")
+        log.warning("supervisor_v2_postgres_checkpointer_unavailable", error=str(exc))
         return build_supervisor_graph_v2()
 
 

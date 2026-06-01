@@ -967,16 +967,30 @@ body {
 }
 
 .grok-skill-card-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
+.grok-skill-card-title.is-inline {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
+.grok-skill-card-desc.ant-typography {
+  min-height: 44px;
+  margin-bottom: 12px !important;
+}
+
 .grok-skill-card-btns {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
   flex-wrap: wrap;
+  gap: 6px 4px;
 }
 
 .grok-info-bar {
@@ -1140,10 +1154,52 @@ body {
 
 .grok-skill-card {
   height: 100%;
+  display: flex;
+  flex-direction: column;
   border-radius: 12px !important;
   border: 1px solid #ececec !important;
   box-shadow: none !important;
   background: #fff !important;
+}
+
+.grok-skill-card .ant-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  min-height: 0;
+}
+
+.grok-skill-card-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 100%;
+}
+
+.grok-skill-card-main {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.grok-skill-card-tags {
+  margin-bottom: 10px;
+}
+
+.grok-skill-card-path {
+  display: block;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grok-skill-card-footer {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
 }
 
 .grok-skill-card .ant-card-head {
@@ -1158,16 +1214,15 @@ body {
   color: #111827;
 }
 
-.grok-skill-card .ant-card-body {
-  padding: 14px 16px 16px;
-}
-
 .grok-skill-card-actions {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
 }
 
 .grok-skill-card-actions .grok-tool-btn {
@@ -1190,8 +1245,9 @@ body {
 
 .grok-skill-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
+  align-items: stretch;
 }
 
 .grok-workflow-wizard-wrap .ant-modal {
@@ -2066,6 +2122,23 @@ body {
 .grok-notification-body {
   margin-bottom: 4px !important;
   white-space: pre-wrap;
+}
+
+.grok-notification-downloads {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.grok-notification-downloads a {
+  color: #1677ff;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.grok-notification-downloads a:hover {
+  text-decoration: underline;
 }
 
 /* ── 账户管理 ── */

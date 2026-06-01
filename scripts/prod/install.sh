@@ -18,7 +18,11 @@ if ! command -v docker &>/dev/null; then
 fi
 
 if [[ ! -f .env ]]; then
-  cat > .env <<'EOF'
+  if [[ -f .env.example ]]; then
+    cp .env.example .env
+    echo "[WARN] 已从 .env.example 复制 .env，请修改密钥"
+  else
+    cat > .env <<'EOF'
 DEBUG=false
 ENFORCE_BFF_ORIGIN=true
 USE_SUPERVISOR_V2=true
@@ -26,11 +30,12 @@ DEEPSEEK_API_KEY=
 POSTGRES_PASSWORD=netops123456
 DJANGO_SECRET_KEY=change-me-in-production
 EOF
-  echo "[WARN] .env 已创建，请修改密钥"
+    echo "[WARN] .env 已创建，请修改密钥"
+  fi
 fi
 
 docker compose -f "$COMPOSE_FILE" pull postgres redis rabbitmq minio qdrant
 docker compose -f "$COMPOSE_FILE" build django react
 mkdir -p "$PROJECT_ROOT/deployment/qdrant_storage"
 
-echo "[完成] 生产环境安装部署完成"
+echo "[完成] 运行 ./scripts/prod/start.sh"

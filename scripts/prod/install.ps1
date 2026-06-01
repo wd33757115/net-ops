@@ -24,8 +24,13 @@ $composeFile = Join-Path $ProjectRoot "deployment\docker-compose.yml"
 $envFile = Join-Path $ProjectRoot ".env"
 
 Write-Step ".env"
+$exampleFile = Join-Path $ProjectRoot ".env.example"
 if (-not (Test-Path $envFile)) {
-    @"
+    if (Test-Path $exampleFile) {
+        Copy-Item $exampleFile $envFile
+        Write-Warn "已从 .env.example 复制 .env - 请修改密钥后再上生产"
+    } else {
+        @"
 DEBUG=false
 ENFORCE_BFF_ORIGIN=true
 USE_SUPERVISOR_V2=true
@@ -33,7 +38,8 @@ DEEPSEEK_API_KEY=
 POSTGRES_PASSWORD=netops123456
 DJANGO_SECRET_KEY=change-me-in-production
 "@ | Set-Content -Path $envFile -Encoding UTF8
-    Write-Warn "Created .env - update secrets before production"
+        Write-Warn "Created minimal .env - update secrets before production"
+    }
 } else {
     Write-Ok ".env exists"
 }

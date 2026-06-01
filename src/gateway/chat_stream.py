@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import time
 from typing import Any, AsyncIterator
@@ -12,6 +11,7 @@ from typing import Any, AsyncIterator
 from fastapi import Request
 
 from src.auth.models import CurrentUser
+from src.core.logging import bind_context, get_logger, reset_context
 from src.gateway.audit_service import write_audit_log
 from src.gateway.chat_context import prepare_chat, validate_chat_user
 from src.gateway.conversation_service import get_conversation_service
@@ -26,7 +26,7 @@ from src.observability.langfuse import (
     start_chat_trace,
 )
 
-logger = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 NODE_LABELS: dict[str, str] = {
     "pre_process": "Skill 匹配与指令加载",
@@ -77,6 +77,12 @@ async def stream_supervisor_chat(
     validate_chat_user(user, enforce_auth=enforce_auth)
 
     prepared = prepare_chat(request, user)
+    stream_started = time.monotonic()
+    context_tokens = bind_context(
+        thread_id=prepared.graph_thread_id,
+        user_id=prepared.effective_user_id,
+        ticket_id=request.ticket_id,
+    )
     lf_trace: LangfuseChatTrace | None = start_chat_trace(
         user=user,
         thread_id=prepared.graph_thread_id,
@@ -86,9 +92,19 @@ async def stream_supervisor_chat(
     )
 
     trace_id = lf_trace.trace_id if lf_trace else None
+    if trace_id:
+        context_tokens.extend(bind_context(trace_id=trace_id))
+        prepared.initial_state["langfuse_parent_trace_id"] = trace_id
     graph_timeout = int(os.getenv("CHAT_GRAPH_TIMEOUT", "170"))
     conv_service = get_conversation_service()
     final_result: dict[str, Any] = {}
+
+    log.info(
+        "chat_stream_started",
+        conversation_id=prepared.conversation_id,
+        query_len=len(request.query or ""),
+        trace_id=trace_id,
+    )
 
     if _should_emit("trace_start", user):
         yield _sse(
@@ -136,19 +152,38 @@ async def stream_supervisor_chat(
         final_result = dict(state_snapshot.values) if state_snapshot and state_snapshot.values else {}
 
     except asyncio.TimeoutError:
+        duration_ms = int((time.monotonic() - stream_started) * 1000)
+        log.warning(
+            "chat_stream_timeout",
+            duration_ms=duration_ms,
+            timeout_seconds=graph_timeout,
+            trace_id=trace_id,
+        )
         end_chat_trace(lf_trace, error=f"Agent 处理超时（{graph_timeout}秒）")
         yield _sse("error", {"message": f"Agent 处理超时（{graph_timeout}秒）", "trace_id": trace_id})
+        reset_context(context_tokens)
         return
     except Exception as exc:
-        logger.exception("SSE chat stream failed")
+        duration_ms = int((time.monotonic() - stream_started) * 1000)
+        log.error(
+            "chat_stream_failed",
+            duration_ms=duration_ms,
+            error=str(exc),
+            trace_id=trace_id,
+            exc_info=exc,
+        )
         end_chat_trace(lf_trace, error=str(exc))
         yield _sse("error", {"message": str(exc), "trace_id": trace_id})
+        reset_context(context_tokens)
         return
 
     messages = final_result.get("messages") or []
     if not messages:
+        duration_ms = int((time.monotonic() - stream_started) * 1000)
+        log.warning("chat_stream_empty_result", duration_ms=duration_ms, trace_id=trace_id)
         end_chat_trace(lf_trace, error="未获得 Agent 结果")
         yield _sse("error", {"message": "未获得 Agent 结果", "trace_id": trace_id})
+        reset_context(context_tokens)
         return
 
     response_msg = messages[-1].content
@@ -208,6 +243,15 @@ async def stream_supervisor_chat(
     ).model_dump()
 
     workflow_run_id = final_result.get("workflow_run_id")
+    duration_ms = int((time.monotonic() - stream_started) * 1000)
+    log.info(
+        "chat_stream_finished",
+        duration_ms=duration_ms,
+        next_agent=next_agent,
+        workflow_run_id=workflow_run_id,
+        celery_task_id=celery_task_id,
+        trace_id=trace_id,
+    )
 
     if _should_emit("final_answer", user):
         yield _sse(
@@ -219,3 +263,4 @@ async def stream_supervisor_chat(
                 "langfuse_url": get_trace_url(trace_id) if user and user.is_admin() else None,
             },
         )
+    reset_context(context_tokens)
