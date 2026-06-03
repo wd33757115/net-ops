@@ -9,6 +9,12 @@ tags:
 - workflow
 - report
 author: NetOps Team
+domain: general
+celery_queue: netops.default
+min_permission_level: user
+rollout_status: stable
+enabled_ratio: 100
+min_platform_version: "1.0.0"
 entry_script: scripts/run.py
 entry_output: file
 triggers:

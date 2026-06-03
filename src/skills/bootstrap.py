@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from src.common.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 _BOOTSTRAP_DONE = False
@@ -56,6 +58,18 @@ def bootstrap_skills(
     count = skill_registry.sync_skills_from_files(dirs, force_replace=force)
     skill_system = get_skill_system()
     skill_system.reload_all(skill_dirs=dirs, rag_service=rag_service)
+
+    if get_settings().SKILL_CATALOG_ENABLED:
+        try:
+            from src.skill_system.catalog import sync_and_index
+
+            catalog_stats = sync_and_index(
+                skill_system.loader.list_all_metadata(),
+                index=True,
+            )
+            logger.info("Skill Catalog 同步完成: %s", catalog_stats)
+        except Exception as exc:
+            logger.warning("Skill Catalog 同步失败（降级为文件路由）: %s", exc)
 
     _BOOTSTRAP_DONE = True
     _LAST_COUNT = count

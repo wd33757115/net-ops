@@ -335,6 +335,83 @@ class FileMetadata(Base):
     is_deleted = Column(Boolean, default=False)
 
 
+class SkillCatalogRecord(Base):
+    """Skill Catalog 索引（Phase 2：分级路由 + 预计算 Embedding）。"""
+
+    __tablename__ = "netops_skill_catalog"
+
+    skill_name = Column(String(128), primary_key=True, index=True)
+    version = Column(String(32), default="1.0.0")
+    description = Column(Text, default="")
+    category = Column(String(64), index=True, default="general")
+    domain = Column(String(64), index=True, default="default")
+    tags = Column(JSON, nullable=True)
+    triggers = Column(JSON, nullable=True)
+    enabled = Column(Boolean, default=True, index=True)
+    hidden = Column(Boolean, default=False)
+    deprecated = Column(Boolean, default=False, index=True)
+    min_permission_level = Column(String(32), default="user")
+    celery_queue = Column(String(128), nullable=True)
+    skill_path = Column(String(1024), nullable=True)
+    content_hash = Column(String(64), index=True, nullable=True)
+    embedding_model = Column(String(128), nullable=True)
+    embedding_vector = Column(JSON, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    rollout_status = Column(String(32), default="stable", index=True, comment="draft/canary/stable/deprecated")
+    enabled_ratio = Column(Integer, default=100, comment="灰度比例 0-100")
+    min_platform_version = Column(String(32), nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_skill_catalog_domain_enabled", "domain", "enabled"),
+        {"comment": "Skill Catalog - 路由索引与 Embedding"},
+    )
+
+
+class SkillExecutionRecord(Base):
+    """Skill 执行标准结果持久化（Phase 0）。"""
+
+    __tablename__ = "netops_skill_executions"
+
+    execution_id = Column(String(64), primary_key=True, index=True)
+    skill_name = Column(String(128), index=True, nullable=False)
+    skill_version = Column(String(32), default="0.0.0")
+    status = Column(String(32), index=True, nullable=False)
+    message = Column(Text, default="")
+    input_params = Column(JSON, nullable=True)
+    output = Column(JSON, nullable=True)
+    artifacts = Column(JSON, nullable=True)
+    exec_metadata = Column(JSON, nullable=True)
+    error_info = Column(JSON, nullable=True)
+    context = Column(JSON, nullable=True)
+    thread_id = Column(String(64), index=True, nullable=True)
+    message_id = Column(String(64), index=True, nullable=True)
+    user_id = Column(String(64), index=True, nullable=True)
+    ticket_id = Column(String(64), index=True, nullable=True)
+    source = Column(String(32), default="celery")
+    executed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_skill_exec_thread_message", "thread_id", "message_id"),
+        Index("ix_skill_exec_executed_at", "executed_at"),
+        {"comment": "Skill 执行记录 - SkillExecutionResult v1"},
+    )
+
+
+class SkillExecutionArchiveLog(Base):
+    """Skill 执行记录归档日志。"""
+
+    __tablename__ = "netops_skill_execution_archives"
+
+    id = Column(String(64), primary_key=True, index=True)
+    object_key = Column(String(512), nullable=False)
+    record_count = Column(Integer, default=0)
+    before_date = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def init_db_models(engine):
     Base.metadata.create_all(bind=engine)
     print("✅ 业务表初始化完成")

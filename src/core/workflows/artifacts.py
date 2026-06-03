@@ -26,21 +26,33 @@ def normalize_step_result(raw: dict[str, Any] | None) -> dict[str, Any]:
         return {"success": False, "message": "空结果", "artifacts": {}}
     success = bool(raw.get("success", raw.get("status") == "success"))
     artifacts = dict(raw.get("artifacts") or {})
-    manifest = raw.get("manifest") or artifacts.get("manifest")
-    if not artifacts.get("config_zip") and raw.get("download_url"):
-        artifacts["config_zip"] = make_file_artifact(
-            file_key=raw.get("config_file_key"),
-            download_url=raw.get("download_url"),
-            filename=raw.get("filename") or "firewall_policies.zip",
-            content_type="application/zip",
+
+    download_url = raw.get("download_url")
+    has_artifact_url = any(
+        isinstance(meta, dict) and _is_http_url(meta.get("download_url"))
+        for meta in artifacts.values()
+    )
+    if download_url and not has_artifact_url:
+        from src.core.skills.result import _guess_content_type, _infer_artifact_key
+
+        filename = str(raw.get("filename") or raw.get("change_excel_filename") or "")
+        file_key = str(raw.get("config_file_key") or raw.get("change_excel_file_key") or raw.get("file_key") or "")
+        art_key = _infer_artifact_key(filename=filename, file_key=file_key, download_url=str(download_url))
+        artifacts[art_key] = make_file_artifact(
+            file_key=file_key or None,
+            download_url=str(download_url),
+            filename=filename or art_key.replace("_", " "),
+            content_type=_guess_content_type(filename, art_key),
         )
-    if not artifacts.get("change_excel") and raw.get("change_excel_url"):
+    elif not artifacts.get("change_excel") and raw.get("change_excel_url"):
         artifacts["change_excel"] = make_file_artifact(
             file_key=raw.get("change_excel_file_key"),
             download_url=raw.get("change_excel_url"),
             filename=raw.get("change_excel_filename") or "change_ticket.xlsx",
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+    manifest = raw.get("manifest") or artifacts.get("manifest")
     normalized = {
         "success": success,
         "message": raw.get("message") or raw.get("result") or "",

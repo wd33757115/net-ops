@@ -1,10 +1,24 @@
 import React from 'react'
 import { Card, Switch, Typography } from 'antd'
-import { EyeOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons'
-import { SkillItem } from '../services/api'
+import { EyeOutlined, ReloadOutlined, EditOutlined, SettingOutlined } from '@ant-design/icons'
+import { SkillItem, SkillRolloutStatus } from '../services/api'
 import { GrokChip, GrokToolBtn } from './ui/GrokUi'
 
 const { Text, Paragraph } = Typography
+
+const ROLLOUT_TONE: Record<SkillRolloutStatus, 'default' | 'warn' | 'ok'> = {
+  draft: 'default',
+  canary: 'warn',
+  stable: 'ok',
+  deprecated: 'warn',
+}
+
+const ROLLOUT_LABEL: Record<SkillRolloutStatus, string> = {
+  draft: 'draft',
+  canary: 'canary',
+  stable: 'stable',
+  deprecated: 'deprecated',
+}
 
 interface SkillCardProps {
   skill: SkillItem
@@ -12,6 +26,7 @@ interface SkillCardProps {
   onReload: (name: string) => void
   onView: (name: string) => void
   onEdit: (name: string) => void
+  onRollout?: (skill: SkillItem) => void
   loading?: boolean
 }
 
@@ -21,8 +36,14 @@ const SkillCard: React.FC<SkillCardProps> = ({
   onReload,
   onView,
   onEdit,
+  onRollout,
   loading,
 }) => {
+  const rollout = (skill.rollout_status || 'stable') as SkillRolloutStatus
+  const ratio = skill.enabled_ratio ?? 100
+  const rolloutLabel =
+    rollout === 'canary' ? `canary ${ratio}%` : ROLLOUT_LABEL[rollout] || rollout
+
   return (
     <Card
       size="small"
@@ -33,6 +54,7 @@ const SkillCard: React.FC<SkillCardProps> = ({
           <GrokChip tone={skill.enabled ? 'ok' : 'default'}>
             {skill.enabled ? 'active' : 'inactive'}
           </GrokChip>
+          <GrokChip tone={ROLLOUT_TONE[rollout] || 'default'}>{rolloutLabel}</GrokChip>
         </span>
       }
       extra={<GrokChip>{skill.category}</GrokChip>}
@@ -48,6 +70,7 @@ const SkillCard: React.FC<SkillCardProps> = ({
       <div className="grok-skill-card-actions">
         <Text type="secondary" style={{ fontSize: 12 }}>
           v{skill.version || '1.0.0'}
+          {skill.domain && skill.domain !== skill.category ? ` · ${skill.domain}` : ''}
         </Text>
         <span className="grok-skill-card-btns">
           <Switch
@@ -56,6 +79,11 @@ const SkillCard: React.FC<SkillCardProps> = ({
             loading={loading}
             onChange={(checked) => onToggle(skill.name, checked)}
           />
+          {onRollout && (
+            <GrokToolBtn icon={<SettingOutlined />} onClick={() => onRollout(skill)}>
+              灰度
+            </GrokToolBtn>
+          )}
           <GrokToolBtn icon={<EyeOutlined />} onClick={() => onView(skill.name)}>
             查看
           </GrokToolBtn>

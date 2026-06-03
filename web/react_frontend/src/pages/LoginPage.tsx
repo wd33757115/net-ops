@@ -29,17 +29,8 @@ const LoginPage: React.FC = () => {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'linear-gradient(135deg, #eef2ff 0%, #f8fafc 50%, #ecfeff 100%)',
-        padding: 24,
-      }}
-    >
-      <Card style={{ width: 420, boxShadow: '0 12px 40px rgba(15,23,42,0.08)' }}>
+    <div className="grok-login-page">
+      <Card className="grok-login-card">
         <Title level={3} style={{ marginBottom: 8 }}>
           NetOps Agent
         </Title>
@@ -67,7 +58,7 @@ const LoginPage: React.FC = () => {
             登录
           </Button>
         </Form>
-        <Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0, fontSize: 12 }}>
+        <Paragraph type="secondary" className="grok-login-hint">
           演示账号：admin/admin123 · operator/operator123 · viewer/viewer123
         </Paragraph>
       </Card>

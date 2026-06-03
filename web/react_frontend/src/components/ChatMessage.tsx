@@ -1,14 +1,17 @@
 import React from 'react'
-import { renderAssistantContent } from '../utils/linkify'
+import { renderAssistantContent, extractDownloadUrlFromContent } from '../utils/linkify'
 
 interface ChatMessageProps {
   role: 'user' | 'assistant'
   content: string
   agentType?: string
+  downloadUrl?: string
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, agentType }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, agentType, downloadUrl }) => {
   const isUser = role === 'user'
+  const resolvedDownload =
+    downloadUrl || (role === 'assistant' ? extractDownloadUrlFromContent(content) : undefined)
 
   if (isUser) {
     return (
@@ -21,6 +24,19 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, agentType }) =
   return (
     <article className="grok-message grok-message-assistant">
       <div className="grok-message-body">{renderAssistantContent(content)}</div>
+      {resolvedDownload && (
+        <p className="grok-message-download" style={{ marginTop: 8 }}>
+          <a
+            href={resolvedDownload}
+            target="_blank"
+            rel="noopener noreferrer"
+            download
+            style={{ color: '#2563eb', fontWeight: 500, textDecoration: 'underline' }}
+          >
+            下载文件
+          </a>
+        </p>
+      )}
       {agentType && <footer className="grok-message-meta">via {agentType}</footer>}
     </article>
   )

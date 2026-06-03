@@ -234,3 +234,13 @@ def execute_device_patrol_task(
             exc_info=e,
         )
         raise e
+
+
+@celery.task(bind=True, max_retries=1)
+def archive_skill_executions_task(self, before_days: int | None = None):
+    """定期归档 netops_skill_executions 到 MinIO。"""
+    from src.core.skills.archive import archive_skill_executions
+
+    result = archive_skill_executions(before_days=before_days)
+    log.info("archive_skill_executions_task_done", **{k: v for k, v in result.items() if k != "error"})
+    return result

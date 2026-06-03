@@ -8,6 +8,12 @@ tags:
 - change
 - excel
 author: NetOps Team
+domain: itsm
+celery_queue: netops.default
+min_permission_level: user
+rollout_status: stable
+enabled_ratio: 100
+min_platform_version: "1.0.0"
 entry_script: scripts/itsm_change_ticket_excel.py
 entry_output: file
 triggers:

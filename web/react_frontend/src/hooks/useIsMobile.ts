@@ -1,7 +1,2 @@
-import { Grid } from 'antd'
-
-/** 视口宽度 < 768px（antd md 断点）视为手机端 */
-export function useIsMobile(): boolean {
-  const screens = Grid.useBreakpoint()
-  return !screens.md
-}
+/** @deprecated 请优先使用 useBreakpoint；保留此文件以兼容现有 import */
+export { useIsMobile, useBreakpoint, MOBILE_BREAKPOINT_PX } from './useBreakpoint'

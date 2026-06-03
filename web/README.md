@@ -68,6 +68,26 @@ npm run dev
 - 状态管理使用 Zustand
 - API 请求使用 Axios + React Query
 
+## 移动端适配
+
+桌面与移动端共用 **Grok 风格** 布局（`GrokShellLayout`），断点 **768px**：
+
+| 视口 | 行为 |
+|------|------|
+| ≥768px | 左侧固定侧栏（会话列表 / 导航） |
+| <768px | 顶栏（菜单 · 标题 · 通知）+ 侧栏 Drawer |
+
+**关键文件：**
+
+- `hooks/useBreakpoint.ts` — 统一断点检测（`useIsMobile` 为其别名）
+- `components/Layout/GrokShellLayout.tsx` — 顶栏与 Drawer
+- `components/chat/ChatShellSidebar.tsx` — `embedded` 模式供 Drawer 内嵌
+- `index.css` — 移动端顶栏、Skill 单列、Workflow 堆叠、登录页等
+
+**已适配页面：** Chat、Skills（含治理/归档）、Users、Login。
+
+本地验证：Chrome DevTools 切换设备宽度，或浏览器窗口缩至 <768px 后刷新。
+
 ## WebSocket 验证
 
 ```bash

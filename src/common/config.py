@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     CELERY_TASK_SOFT_TIME_LIMIT: int = 300
     CELERY_TASK_TIME_LIMIT: int = 360
     CELERY_MAX_RETRIES: int = 3
+    # 空字符串表示自动：Windows → solo，Linux/macOS → prefork
+    CELERY_WORKER_POOL: str = ""
+    CELERY_WORKER_QUEUES: str = "netops.default,netops.firewall,netops.device"
 
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -85,6 +88,38 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "console"  # console | json
     USE_SUPERVISOR_V2: bool = True
+
+    # Embedding（Skill Catalog / 分级路由）
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"
+    EMBEDDING_DEVICE: str = "cpu"
+
+    # Skill Catalog + 分级路由（Phase 2）
+    SKILL_CATALOG_ENABLED: bool = True
+    SKILL_CATALOG_USE_TIERED_ROUTING: bool = True
+    SKILL_CATALOG_SEMANTIC_MIN_SCORE: float = 0.72
+    PRE_PROCESS_TOP_K: int = 5
+    PRE_PROCESS_HARD_LIMIT: int = 8
+
+    # Skill 执行限流
+    SKILL_RATE_LIMIT_ENABLED: bool = True
+    SKILL_RATE_LIMIT_PER_USER: int = 30
+    SKILL_RATE_LIMIT_PER_SKILL: int = 200
+
+    # Skill 治理与归档（Phase 3）
+    SKILL_GOVERNANCE_ENABLED: bool = True
+    PLATFORM_VERSION: str = "1.0.0"
+    SKILL_EXEC_ARCHIVE_ENABLED: bool = True
+    SKILL_EXEC_ARCHIVE_AFTER_DAYS: int = 90
+    SKILL_EXEC_ARCHIVE_BATCH_SIZE: int = 500
+
+    # Redis Streams EventBus（Phase 1）
+    EVENT_BUS_ENABLED: bool = True
+    EVENT_BUS_STREAM_MAXLEN: int = 100_000
+    EVENT_BUS_CONSUMER_BATCH_SIZE: int = 20
+    EVENT_BUS_CONSUMER_BLOCK_MS: int = 500
+    EVENT_BUS_POLL_IDLE_SEC: float = 1.0
+    # 生产默认 true：EventBus 与 DB 通知双写，Consumer 未启动时用户仍能收到站内信
+    EVENT_BUS_DIRECT_NOTIFY_FALLBACK: bool = True
 
     # 与 Django SIMPLE_JWT 共用（默认与 SECRET_KEY 一致，生产务必在 .env 中显式设置）
     JWT_SECRET_KEY: str = "django-insecure-default-key-change-in-production"

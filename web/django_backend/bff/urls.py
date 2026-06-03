@@ -86,6 +86,18 @@ urlpatterns = [
     path("itsm/webhook/callback/", itsm.proxy_itsm_callback, name="bff_itsm_callback"),
     path("skills/", skills.proxy_skills_list, name="bff_skills_list"),
     path("skills/stats/", skills.proxy_skills_stats, name="bff_skills_stats"),
+    path("skills/catalog/stats/", skills.proxy_catalog_stats, name="bff_skills_catalog_stats"),
+    path("skills/catalog/reindex/", skills.proxy_catalog_reindex, name="bff_skills_catalog_reindex"),
+    path(
+        "skills/catalog/<str:skill_name>/rollout/",
+        skills.proxy_catalog_rollout,
+        name="bff_skills_catalog_rollout",
+    ),
+    path(
+        "skills/governance/archive-executions/",
+        skills.proxy_governance_archive_executions,
+        name="bff_skills_governance_archive",
+    ),
     path("skills/reload-all/", skills.proxy_reload_all_skills, name="bff_skills_reload_all"),
     path("skills/<str:skill_name>/content/", skills.proxy_skill_content, name="bff_skill_content"),
     path("skills/<str:skill_name>/files/", skills.proxy_skill_files, name="bff_skill_files"),

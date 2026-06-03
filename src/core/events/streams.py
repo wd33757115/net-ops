@@ -1,0 +1,12 @@
+"""Redis Streams 命名约定。"""
+
+STREAM_SKILL_EXECUTION = "netops:skill.execution.v1"
+STREAM_WORKFLOW = "netops:workflow.v1"
+STREAM_DLQ = "netops:events.dlq"
+
+GROUP_AUDIT = "netops-audit"
+GROUP_NOTIFY = "netops-notify"
+GROUP_METRICS = "netops-metrics"
+
+IDEMPOTENCY_PREFIX = "netops:event:done:"
+IDEMPOTENCY_TTL_SEC = 7 * 24 * 3600

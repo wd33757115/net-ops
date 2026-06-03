@@ -272,10 +272,16 @@ def run_diagnostics() -> DiagnosticsResponse:
 
 def extract_download_url_from_graph_result(result: dict[str, Any]) -> str | None:
     """从 Supervisor 图结果中提取首个 Skill 下载链接。"""
+    from src.core.workflows.artifacts import collect_download_links
+
     intermediate = result.get("intermediate_results") or {}
     for item in intermediate.values():
-        if isinstance(item, dict):
-            url = item.get("download_url")
-            if url:
-                return str(url)
+        if not isinstance(item, dict):
+            continue
+        links = collect_download_links(result=item)
+        if links:
+            return links[0]["url"]
+        url = item.get("download_url")
+        if url:
+            return str(url)
     return None

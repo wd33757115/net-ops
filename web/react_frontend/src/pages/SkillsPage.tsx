@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react'
 import { Tabs } from 'antd'
 import GrokShellLayout from '../components/layout/GrokShellLayout'
+import { useIsMobile } from '../hooks/useBreakpoint'
 import SkillManageTab from '../components/skills/SkillManageTab'
 import WorkflowPluginList from '../components/skills/WorkflowPluginList'
 import TemplateMarketTab from '../components/skills/TemplateMarketTab'
@@ -9,6 +10,7 @@ import WorkflowWizard, { WorkflowWizardInitial } from '../components/skills/Work
 import WorkflowWizardShell from '../components/skills/WorkflowWizardShell'
 
 const SkillsPage: React.FC = () => {
+  const isMobile = useIsMobile()
   const [activeTab, setActiveTab] = useState('skills')
   const [wizardOpen, setWizardOpen] = useState(false)
   const [wizardInitial, setWizardInitial] = useState<WorkflowWizardInitial | null>(null)
@@ -79,6 +81,7 @@ const SkillsPage: React.FC = () => {
         activeKey={activeTab}
         onChange={setActiveTab}
         items={tabItems}
+        size={isMobile ? 'small' : 'middle'}
         className="grok-skills-tabs"
       />
     </GrokShellLayout>

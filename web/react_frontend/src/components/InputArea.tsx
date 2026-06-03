@@ -3,7 +3,7 @@ import { Input, Upload, message } from 'antd'
 import { ArrowUpOutlined, CloseOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useChatStore } from '../store/useChatStore'
 import { chatApi } from '../services/api'
-import { useIsMobile } from '../hooks/useIsMobile'
+import { useIsMobile } from '../hooks/useBreakpoint'
 
 const { TextArea } = Input
 

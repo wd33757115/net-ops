@@ -62,6 +62,8 @@ def test_create_skill_md():
     assert "name: test-skill" in content
     assert "测试技能描述" in content
     assert "category: test" in content
+    assert "rollout_status: draft" in content
+    assert "domain: general" in content
     print("[OK] test_create_skill_md")
 
 

@@ -85,6 +85,50 @@ export interface SkillItem {
   enabled: boolean
   version?: string
   fallback_to_rag?: boolean
+  domain?: string
+  celery_queue?: string | null
+  rollout_status?: SkillRolloutStatus
+  enabled_ratio?: number
+  min_platform_version?: string | null
+  min_permission_level?: string
+  catalog_indexed?: boolean
+}
+
+export type SkillRolloutStatus = 'draft' | 'canary' | 'stable' | 'deprecated'
+
+export interface SkillCatalogStats {
+  total: number
+  enabled: number
+  indexed: number
+  memory_cached: number
+}
+
+export interface SkillRolloutUpdate {
+  rollout_status?: SkillRolloutStatus
+  enabled_ratio?: number
+  min_platform_version?: string | null
+  enabled?: boolean
+}
+
+export interface SkillCatalogEntry {
+  skill_name: string
+  rollout_status: SkillRolloutStatus
+  enabled_ratio: number
+  min_platform_version?: string | null
+  enabled: boolean
+  domain?: string
+  celery_queue?: string | null
+}
+
+export interface SkillArchiveResult {
+  success?: boolean
+  archived: number
+  cutoff?: string
+  object_key?: string
+  archive_id?: string
+  skipped?: boolean
+  reason?: string
+  error?: string
 }
 
 export interface SkillStats {
@@ -323,6 +367,37 @@ export const skillApi = {
   },
   getSchema: async (name: string): Promise<import('../types/workflowDsl').SkillSchema> => {
     const response = await api.get<import('../types/workflowDsl').SkillSchema>(`/skills/${name}/schema/`)
+    return response.data
+  },
+}
+
+export const skillCatalogApi = {
+  getStats: async (): Promise<SkillCatalogStats> => {
+    const response = await api.get<SkillCatalogStats>('/skills/catalog/stats/')
+    return response.data
+  },
+  reindex: async (force = false): Promise<{ success: boolean; [key: string]: unknown }> => {
+    const response = await api.post(`/skills/catalog/reindex/?force=${force}`)
+    return response.data
+  },
+  updateRollout: async (
+    skillName: string,
+    data: SkillRolloutUpdate
+  ): Promise<{ success: boolean; catalog: SkillCatalogEntry }> => {
+    const response = await api.patch<{ success: boolean; catalog: SkillCatalogEntry }>(
+      `/skills/catalog/${skillName}/rollout/`,
+      data
+    )
+    return response.data
+  },
+  archiveExecutions: async (
+    beforeDays?: number,
+    batchSize?: number
+  ): Promise<SkillArchiveResult> => {
+    const response = await api.post<SkillArchiveResult>('/skills/governance/archive-executions/', {
+      before_days: beforeDays,
+      batch_size: batchSize,
+    })
     return response.data
   },
 }

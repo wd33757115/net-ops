@@ -9,7 +9,8 @@ export interface NotificationLink {
 }
 
 function isHttpUrl(value: unknown): value is string {
-  return typeof value === 'string' && /^https?:\/\//i.test(value.trim())
+  const text = typeof value === 'string' ? value.trim() : ''
+  return /^https?:\/\//i.test(text) || text.startsWith('/api/')
 }
 
 /** 从 payload 提取全部可点击链接（优先 downloads 列表，兼容旧字段与任意 URL 字符串） */

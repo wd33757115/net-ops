@@ -10,6 +10,12 @@ tags:
 - network
 - audit
 author: NetOps Team
+domain: network
+celery_queue: netops.default
+min_permission_level: user
+rollout_status: stable
+enabled_ratio: 100
+min_platform_version: "1.0.0"
 triggers:
 - 对比配置
 - 配置差异

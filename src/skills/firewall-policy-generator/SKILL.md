@@ -10,6 +10,12 @@ tags:
 - network
 - security
 author: NetOps Team
+domain: security
+celery_queue: netops.firewall
+min_permission_level: user
+rollout_status: stable
+enabled_ratio: 100
+min_platform_version: "1.0.0"
 entry_script: scripts/run.py
 entry_output: dir
 triggers:

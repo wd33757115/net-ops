@@ -222,6 +222,7 @@ class CreateSkillRequest(BaseModel):
     author: str = Field("NetOps Team")
     triggers: list[str] = Field(default_factory=list)
     instructions: str | None = Field(None, description="Markdown 指令正文")
+    template_type: str | None = Field(None, description="generic | analysis")
 
 
 class UpdateSkillRequest(BaseModel):

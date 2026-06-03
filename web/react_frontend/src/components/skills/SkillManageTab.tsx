@@ -1,18 +1,25 @@
 import React, { useMemo, useState } from 'react'
-import { Col, Empty, Input, Modal, Row, Spin, message } from 'antd'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Col, Empty, Input, Modal, Row, Spin, Space, Typography, message } from 'antd'
+import { DatabaseOutlined, InboxOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from 'react-query'
 import SkillCard from '../SkillCard'
 import SkillEditorModal from '../SkillEditorModal'
 import SkillCreateWizard from './SkillCreateWizard'
+import SkillRolloutDrawer from './SkillRolloutDrawer'
+import SkillArchiveModal from './SkillArchiveModal'
 import { GrokToolBtn } from '../ui/GrokUi'
-import { skillApi, SkillItem } from '../../services/api'
+import { useAuth } from '../../context/AuthContext'
+import { skillApi, skillCatalogApi, SkillItem } from '../../services/api'
+
+const { Text } = Typography
 
 interface SkillManageTabProps {
   onOpenWizard?: () => void
 }
 
 const SkillManageTab: React.FC<SkillManageTabProps> = () => {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -20,11 +27,31 @@ const SkillManageTab: React.FC<SkillManageTabProps> = () => {
   const [viewName, setViewName] = useState<string | null>(null)
   const [editName, setEditName] = useState<string | null>(null)
   const [actionSkill, setActionSkill] = useState<string | null>(null)
+  const [rolloutSkill, setRolloutSkill] = useState<SkillItem | null>(null)
+  const [archiveOpen, setArchiveOpen] = useState(false)
 
   const { data: skills = [], isLoading, refetch } = useQuery<SkillItem[]>(
     'skills',
     skillApi.list,
     { refetchOnWindowFocus: false }
+  )
+
+  const { data: catalogStats } = useQuery(
+    'skill-catalog-stats',
+    skillCatalogApi.getStats,
+    { refetchOnWindowFocus: false }
+  )
+
+  const reindexMutation = useMutation(
+    (force: boolean) => skillCatalogApi.reindex(force),
+    {
+      onSuccess: (res) => {
+        message.success(`Catalog 索引完成（${res.indexed ?? res.total ?? ''} 条）`)
+        queryClient.invalidateQueries('skills')
+        queryClient.invalidateQueries('skill-catalog-stats')
+      },
+      onError: () => message.error('Catalog 重建索引失败'),
+    }
   )
 
   const filtered = useMemo(() => {
@@ -65,6 +92,32 @@ const SkillManageTab: React.FC<SkillManageTabProps> = () => {
 
   return (
     <>
+      {catalogStats && (
+        <div className="grok-page-toolbar grok-page-toolbar-inline" style={{ marginBottom: 12 }}>
+          <Space wrap size="middle">
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              <DatabaseOutlined style={{ marginRight: 6 }} />
+              Catalog: {catalogStats.total} 条 · 启用 {catalogStats.enabled} · 已索引{' '}
+              {catalogStats.indexed}
+            </Text>
+            {isAdmin && (
+              <>
+                <GrokToolBtn
+                  icon={<ReloadOutlined />}
+                  loading={reindexMutation.isLoading}
+                  onClick={() => reindexMutation.mutate(false)}
+                >
+                  重建索引
+                </GrokToolBtn>
+                <GrokToolBtn icon={<InboxOutlined />} onClick={() => setArchiveOpen(true)}>
+                  归档执行记录
+                </GrokToolBtn>
+              </>
+            )}
+          </Space>
+        </div>
+      )}
+
       <div className="grok-page-toolbar grok-page-toolbar-inline">
         <Input
           className="grok-search-input"
@@ -104,6 +157,7 @@ const SkillManageTab: React.FC<SkillManageTabProps> = () => {
                 }}
                 onView={handleView}
                 onEdit={setEditName}
+                onRollout={isAdmin ? setRolloutSkill : undefined}
               />
             </Col>
           ))}
@@ -132,6 +186,14 @@ const SkillManageTab: React.FC<SkillManageTabProps> = () => {
         onClose={() => setEditName(null)}
         onSaved={() => queryClient.invalidateQueries('skills')}
       />
+
+      <SkillRolloutDrawer
+        skill={rolloutSkill}
+        open={!!rolloutSkill}
+        onClose={() => setRolloutSkill(null)}
+      />
+
+      <SkillArchiveModal open={archiveOpen} onClose={() => setArchiveOpen(false)} />
     </>
   )
 }

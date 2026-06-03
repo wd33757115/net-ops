@@ -1,10 +1,17 @@
 import React, { useState } from 'react'
-import { Form, Input, Modal, Select, Steps, message, Typography } from 'antd'
+import { Alert, Form, Input, Modal, Select, Steps, message, Typography } from 'antd'
 import { useMutation } from 'react-query'
 import { skillApi } from '../../services/api'
 
 const { TextArea } = Input
 const { Text } = Typography
+
+const GOVERNANCE_BLOCK = `domain: general
+celery_queue: netops.default
+min_permission_level: user
+rollout_status: draft
+enabled_ratio: 0
+min_platform_version: "1.0.0"`
 
 const ANALYSIS_TEMPLATE = `---
 name: my-analyzer
@@ -13,6 +20,7 @@ description: 自定义 LLM 分析 Skill
 category: analysis
 tags:
 - analysis
+${GOVERNANCE_BLOCK}
 entry_script: scripts/run.py
 entry_output: file
 triggers:
@@ -32,6 +40,8 @@ inputs:
 outputs:
 - name: analysis
   type: text
+- name: analysis_json
+  type: object
 ---
 
 # 自定义分析 Skill
@@ -45,6 +55,7 @@ version: 1.0.0
 description: 自定义 Skill
 category: general
 tags: []
+${GOVERNANCE_BLOCK}
 entry_script: scripts/run.py
 entry_output: none
 triggers: []
@@ -74,7 +85,7 @@ const SkillCreateWizard: React.FC<SkillCreateWizardProps> = ({ open, onClose, on
     (values: Record<string, unknown>) => skillApi.create(values),
     {
       onSuccess: (_, values) => {
-        message.success('Skill 创建成功')
+        message.success('Skill 创建成功（默认 draft，需在灰度治理中发布）')
         setCreatedName(String(values.name))
         setStep(3)
         onCreated?.()
@@ -121,7 +132,12 @@ const SkillCreateWizard: React.FC<SkillCreateWizardProps> = ({ open, onClose, on
       const triggers = values.triggers
         ? String(values.triggers).split('\n').map((t: string) => t.trim()).filter(Boolean)
         : []
-      createMutation.mutate({ ...values, tags, triggers })
+      createMutation.mutate({
+        ...values,
+        tags,
+        triggers,
+        template_type: values.template_type || 'generic',
+      })
     })
   }
 
@@ -152,18 +168,25 @@ const SkillCreateWizard: React.FC<SkillCreateWizardProps> = ({ open, onClose, on
       <Form form={form} layout="vertical" initialValues={{ category: 'general', template_type: 'generic' }}>
         {step === 0 && (
           <>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="新建 Skill 默认 rollout_status=draft，创建后需在卡片「灰度」中发布为 canary/stable 方可被路由。"
+            />
             <Form.Item name="name" label="名称" rules={[{ required: true, pattern: /^[a-z0-9-]+$/, message: '小写字母、数字、连字符' }]}>
               <Input placeholder="my-skill" />
             </Form.Item>
             <Form.Item name="description" label="描述" rules={[{ required: true }]}>
               <TextArea rows={3} />
             </Form.Item>
-            <Form.Item name="category" label="分类">
+            <Form.Item name="category" label="分类" tooltip="决定 domain / Celery 队列默认值">
               <Select options={[
-                { value: 'network', label: 'network' },
-                { value: 'security', label: 'security' },
-                { value: 'analysis', label: 'analysis' },
-                { value: 'general', label: 'general' },
+                { value: 'network', label: 'network（netops.device）' },
+                { value: 'security', label: 'security（netops.firewall）' },
+                { value: 'itsm', label: 'itsm（netops.default）' },
+                { value: 'analysis', label: 'analysis（netops.default）' },
+                { value: 'general', label: 'general（netops.default）' },
               ]} />
             </Form.Item>
             <Form.Item name="triggers" label="触发词（每行一个）">
@@ -196,10 +219,10 @@ const SkillCreateWizard: React.FC<SkillCreateWizardProps> = ({ open, onClose, on
               </Text>
             )}
             {templateType === 'analysis' && (
-              <TextArea value={ANALYSIS_TEMPLATE} readOnly rows={12} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+              <TextArea value={ANALYSIS_TEMPLATE} readOnly rows={14} style={{ fontFamily: 'monospace', fontSize: 12 }} />
             )}
             {templateType === 'generic' && (
-              <TextArea value={GENERIC_TEMPLATE} readOnly rows={8} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+              <TextArea value={GENERIC_TEMPLATE} readOnly rows={12} style={{ fontFamily: 'monospace', fontSize: 12 }} />
             )}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
               <button type="button" className="grok-tool-btn" onClick={() => setStep(0)}>上一步</button>
@@ -211,6 +234,15 @@ const SkillCreateWizard: React.FC<SkillCreateWizardProps> = ({ open, onClose, on
         {step === 2 && (
           <>
             <Text>确认创建 Skill 并生成目录脚手架。创建后可在编辑器中完善 SKILL.md 与 scripts。</Text>
+            {templateType !== 'llm-result-analyzer' && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginTop: 12 }}
+                message="Catalog 同步"
+                description="创建后会自动 reload 并写入 Catalog；默认 draft 状态不会参与聊天路由，请通过「灰度」调整为 canary 或 stable。"
+              />
+            )}
             {templateType === 'llm-result-analyzer' ? (
               <div style={{ marginTop: 16 }}>
                 <Text type="warning">已选择引用内置 Skill，无需创建。请关闭向导并在 Workflow 标签页继续配置。</Text>
@@ -234,7 +266,10 @@ const SkillCreateWizard: React.FC<SkillCreateWizardProps> = ({ open, onClose, on
 
         {step === 3 && (
           <>
-            <Text>Skill <strong>{createdName}</strong> 已创建。填写测试参数 JSON 进行试跑（可选）。</Text>
+            <Text>
+              Skill <strong>{createdName}</strong> 已创建（<Text code>draft</Text>）。
+              试跑前请先在卡片「灰度」中设为 <Text code>stable</Text> 或本地关闭治理校验。
+            </Text>
             <div style={{ marginTop: 12 }}>
               <TextArea
                 value={testParams}

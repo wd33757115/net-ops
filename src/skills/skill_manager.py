@@ -24,32 +24,56 @@ class SkillManager:
         """初始化管理器"""
         self._skills_dir = Path(__file__).parent.parent.parent / "src" / "skills"
 
+    def _catalog_map(self) -> dict[str, dict[str, Any]]:
+        try:
+            from src.skill_system.catalog.repository import list_catalog_entries
+
+            return {
+                entry["skill_name"]: entry
+                for entry in list_catalog_entries(enabled_only=False)
+            }
+        except Exception as exc:
+            logger.debug("加载 Catalog 失败，列表将不含灰度字段: %s", exc)
+            return {}
+
     def list_all_skills(self) -> list[dict[str, Any]]:
         """
         获取所有 Skill 列表（仅 SKILL.md 文件型 Skill，与 SkillSystem 扫描范围一致）
 
         Returns:
-            List[Dict]: Skill 信息列表
+            List[Dict]: Skill 信息列表（含 Catalog 灰度治理字段）
         """
         try:
             from src.skills.registry import skill_registry
 
+            catalog = self._catalog_map()
             skills = []
             for item in self.list_file_skills():
                 name = item["name"]
                 reg_skill = skill_registry.get_skill(name)
+                cat = catalog.get(name, {})
+                enabled = reg_skill.enabled if reg_skill else item.get("enabled", True)
+                if cat and "enabled" in cat:
+                    enabled = bool(cat["enabled"])
                 skills.append({
                     "name": name,
                     "description": item.get("description", ""),
                     "category": item.get("category", "general"),
                     "tags": item.get("tags", []),
-                    "enabled": reg_skill.enabled if reg_skill else item.get("enabled", True),
+                    "enabled": enabled,
                     "version": item.get("version", "1.0.0"),
                     "fallback_to_rag": (
                         reg_skill.fallback_to_rag_if_fail
                         if reg_skill
                         else item.get("fallback_to_rag", True)
                     ),
+                    "domain": cat.get("domain") or item.get("domain") or item.get("category", "general"),
+                    "celery_queue": cat.get("celery_queue") or item.get("celery_queue"),
+                    "rollout_status": cat.get("rollout_status") or item.get("rollout_status") or "stable",
+                    "enabled_ratio": cat.get("enabled_ratio") if cat.get("enabled_ratio") is not None else item.get("enabled_ratio", 100),
+                    "min_platform_version": cat.get("min_platform_version") or item.get("min_platform_version"),
+                    "min_permission_level": cat.get("min_permission_level") or item.get("min_permission_level", "user"),
+                    "catalog_indexed": bool(cat.get("embedding_vector")),
                 })
             return skills
 
@@ -85,6 +109,9 @@ class SkillManager:
                 content = skill_md.read_text(encoding='utf-8')
                 metadata = self._parse_skill_md_content(content)
 
+                ratio = metadata.get("enabled_ratio")
+                if ratio is not None:
+                    ratio = int(float(ratio) * 100 if float(ratio) <= 1 else float(ratio))
                 skills.append({
                     "name": metadata.get("name", item.name),
                     "description": metadata.get("description", ""),
@@ -93,6 +120,12 @@ class SkillManager:
                     "version": metadata.get("version", "1.0.0"),
                     "enabled": metadata.get("enabled", True),
                     "fallback_to_rag": metadata.get("fallback_to_rag", True),
+                    "domain": metadata.get("domain") or metadata.get("category", "general"),
+                    "celery_queue": metadata.get("celery_queue"),
+                    "rollout_status": metadata.get("rollout_status"),
+                    "enabled_ratio": ratio,
+                    "min_platform_version": metadata.get("min_platform_version"),
+                    "min_permission_level": metadata.get("min_permission_level", "user"),
                     "skill_path": str(item),
                     "skill_md_path": str(skill_md)
                 })
@@ -513,14 +546,34 @@ class SkillManager:
             triggers = data.get("triggers", [])
             inputs = data.get("inputs", [])
             outputs = data.get("outputs", [])
+            template_type = data.get("template_type", "generic")
 
-            if not inputs:
-                inputs = [{"name": "param1", "type": "string", "required": False, "description": "输入参数"}]
-            if not outputs:
-                outputs = [{"name": "result", "type": "text", "description": "执行结果"}]
+            if template_type == "analysis":
+                inputs = inputs or [
+                    {"name": "ticket_id", "type": "string", "required": False, "description": "工单号"},
+                    {"name": "prev_result", "type": "object", "required": False, "description": "上游步骤结果"},
+                    {"name": "analysis_prompt", "type": "string", "required": False, "description": "分析问题"},
+                ]
+                outputs = outputs or [
+                    {"name": "analysis", "type": "text", "description": "Markdown 分析报告"},
+                    {"name": "analysis_json", "type": "object", "description": "结构化元数据"},
+                ]
+                entry_output = "file"
+                if category == "general":
+                    category = "analysis"
+            else:
+                entry_output = data.get("entry_output", "none")
+                if not inputs:
+                    inputs = [{"name": "param1", "type": "string", "required": False, "description": "输入参数"}]
+                if not outputs:
+                    outputs = [{"name": "result", "type": "text", "description": "执行结果"}]
+
             if not triggers:
                 triggers = [f"使用{skill_name}"]
 
+            from src.skill_system.metadata import resolve_category_governance
+
+            gov = resolve_category_governance(category)
             return create_skill_md(
                 skill_name=skill_name,
                 description=description,
@@ -531,6 +584,13 @@ class SkillManager:
                 version=version,
                 inputs=inputs,
                 outputs=outputs,
+                domain=data.get("domain") or gov["domain"],
+                celery_queue=data.get("celery_queue") or gov["celery_queue"],
+                rollout_status=data.get("rollout_status", "draft"),
+                enabled_ratio=int(data.get("enabled_ratio", 0)),
+                min_platform_version=data.get("min_platform_version", "1.0.0"),
+                min_permission_level=data.get("min_permission_level", "user"),
+                entry_output=entry_output,
             )
 
         except ImportError as e:

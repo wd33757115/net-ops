@@ -3,7 +3,7 @@ import { Button, Drawer } from 'antd'
 import { MenuOutlined } from '@ant-design/icons'
 import ChatShellSidebar from '../chat/ChatShellSidebar'
 import NotificationBell from '../NotificationBell'
-import { useIsMobile } from '../../hooks/useIsMobile'
+import { useIsMobile } from '../../hooks/useBreakpoint'
 
 interface GrokShellLayoutProps {
   children: React.ReactNode
@@ -32,8 +32,9 @@ const GrokShellLayout: React.FC<GrokShellLayoutProps> = ({
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const drawerWidth = Math.min(300, typeof window !== 'undefined' ? window.innerWidth * 0.88 : 300)
 
-  const showPageHeader = mode === 'page' && (title || subtitle)
+  const showPageHeader = mode === 'page' && (title || subtitle) && !isMobile
   const pageToolbar = toolbar ?? actions
+  const mobileTitle = mode === 'page' ? title : 'NetOps Agent'
 
   return (
     <div className="grok-shell">
@@ -48,24 +49,30 @@ const GrokShellLayout: React.FC<GrokShellLayoutProps> = ({
         styles={{ body: { padding: 0 } }}
         className="grok-sidebar-drawer"
       >
-        <ChatShellSidebar onNavigate={() => setSidebarOpen(false)} />
+        <ChatShellSidebar embedded onNavigate={() => setSidebarOpen(false)} />
       </Drawer>
 
       <main className={`grok-main${mode === 'chat' ? ' grok-main-chat' : ''}`}>
-        {mode === 'chat' && (
+        {!isMobile && mode === 'chat' && (
           <div className="grok-chat-topbar">
             <NotificationBell />
           </div>
         )}
+
         {isMobile && (
-          <div className="grok-mobile-bar">
+          <header className="grok-mobile-bar">
             <Button
               type="text"
               icon={<MenuOutlined />}
               aria-label="打开菜单"
+              className="grok-mobile-bar-menu"
               onClick={() => setSidebarOpen(true)}
             />
-          </div>
+            {mobileTitle && <span className="grok-mobile-bar-title">{mobileTitle}</span>}
+            <div className="grok-mobile-bar-actions">
+              <NotificationBell />
+            </div>
+          </header>
         )}
 
         {mode === 'chat' ? (
@@ -85,6 +92,9 @@ const GrokShellLayout: React.FC<GrokShellLayoutProps> = ({
                     {subtitle && <p className="grok-page-subtitle">{subtitle}</p>}
                   </div>
                 </header>
+              )}
+              {isMobile && subtitle && (
+                <p className="grok-page-subtitle grok-page-subtitle--mobile">{subtitle}</p>
               )}
               {pageToolbar && <div className="grok-page-toolbar">{pageToolbar}</div>}
               <div className="grok-page-body">{children}</div>

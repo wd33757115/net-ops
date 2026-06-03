@@ -18,6 +18,21 @@ function Get-ListeningPidsOnPort {
     return @($pids)
 }
 
+function Stop-ProjectCeleryWorkers {
+    param([string]$ProjectRoot)
+    $pattern = [regex]::Escape($ProjectRoot)
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -and
+            ($_.CommandLine -match $pattern) -and
+            ($_.CommandLine -match 'celery.*celery_app')
+        } |
+        ForEach-Object {
+            Write-ColorOutput "    Stop Celery worker PID $($_.ProcessId)" "Gray"
+            cmd /c "taskkill /F /T /PID $($_.ProcessId)" 2>$null | Out-Null
+        }
+}
+
 function Stop-ProjectAppProcesses {
     param([string]$ProjectRoot)
     $pattern = [regex]::Escape($ProjectRoot)
@@ -112,19 +127,64 @@ function Wait-ReactReady {
         [int]$Port = 3000,
         [int]$TimeoutSec = 90
     )
+    $result = Wait-ServicesReady -ReactPort $Port -TimeoutSec $TimeoutSec
+    return $result.React
+}
+
+function Wait-ServicesReady {
+    param(
+        [int]$ReactPort = 3000,
+        [int]$DjangoPort = 8001,
+        [int]$FastAPIPort = 8000,
+        [int]$TimeoutSec = 300,
+        [int]$IntervalSec = 3,
+        [switch]$PreviewMode
+    )
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $reactUrl = "http://localhost:$ReactPort/"
+    $bffUrl = "http://localhost:$DjangoPort/api/health/"
+    $apiUrl = "http://localhost:$FastAPIPort/health"
+    $reactOk = $false
+    $bffOk = $false
+    $apiOk = $false
+    $lastStatus = ""
+
     while ((Get-Date) -lt $deadline) {
-        try {
-            $html = (Invoke-WebRequest -Uri "http://localhost:$Port/" -UseBasicParsing -TimeoutSec 8).Content
-            $isDev = ($html -match '@vite/client') -and ($html -match '/src/main\.tsx' -or $html -match 'html-proxy')
-            $isPreview = ($html -match '/assets/index-.*\.js')
-            if ($isDev -or $isPreview) { return $true }
-        } catch {
-            # retry
+        if (-not $reactOk) {
+            try {
+                $html = (Invoke-WebRequest -Uri $reactUrl -UseBasicParsing -TimeoutSec 8).Content
+                $isDev = ($html -match '@vite/client') -and ($html -match '/src/main\.tsx' -or $html -match 'html-proxy')
+                $isPreview = ($html -match '/assets/index-[^"]+\.js')
+                if ($isDev -or $isPreview) { $reactOk = $true }
+            } catch { }
         }
-        Start-Sleep -Seconds 2
+        if (-not $bffOk) {
+            try {
+                $r = Invoke-WebRequest -Uri $bffUrl -UseBasicParsing -TimeoutSec 8
+                if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { $bffOk = $true }
+            } catch { }
+        }
+        if (-not $apiOk) {
+            try {
+                $r = Invoke-WebRequest -Uri $apiUrl -UseBasicParsing -TimeoutSec 8
+                if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { $apiOk = $true }
+            } catch { }
+        }
+
+        $reactState = if ($reactOk) { "OK" } else { "..." }
+        $bffState = if ($bffOk) { "OK" } else { "..." }
+        $apiState = if ($apiOk) { "OK" } else { "..." }
+        $status = "React=$reactState BFF=$bffState FastAPI=$apiState"
+        if ($status -ne $lastStatus) {
+            Write-ColorOutput "  $status" "Gray"
+            $lastStatus = $status
+        }
+        if ($reactOk -and $bffOk -and $apiOk) {
+            return @{ React = $true; Bff = $true; Api = $true }
+        }
+        Start-Sleep -Seconds $IntervalSec
     }
-    return $false
+    return @{ React = $reactOk; Bff = $bffOk; Api = $apiOk }
 }
 
 function Stop-DockerAppContainers {

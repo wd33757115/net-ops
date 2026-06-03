@@ -31,10 +31,14 @@ export function linkifyText(text: string): React.ReactNode[] {
 
 /** 从助手回复正文中解析「下载:」后的 URL（兼容历史消息） */
 export function extractDownloadUrlFromContent(content: string): string | undefined {
-  const md = content.match(/\[点击下载[^\]]*\]\((https?:\/\/[^)]+)\)/i)
-  if (md?.[1]) return md[1]
-  const plain = content.match(/(?:下载|download)[：:\s]+((?:https?:\/\/|\/api\/)\S+)/i)
-  return plain?.[1]?.replace(/[)\],.]+$/, '')
+  const md = content.match(/\[([^\]]+)\]\(((?:https?:\/\/|\/api\/)[^)]+)\)/i)
+  if (md?.[2]) return md[2]
+  const plain = content.match(/(?:下载|download)[：:\s]+(\S+)/i)
+  const candidate = plain?.[1]?.replace(/[)\],.]+$/, '')
+  if (candidate && (/^https?:\/\//i.test(candidate) || candidate.startsWith('/api/'))) {
+    return candidate
+  }
+  return undefined
 }
 
 const MD_LINK_PATTERN = /\[([^\]]+)\]\((https?:\/\/[^)]+|\/api\/[^)]+)\)/g

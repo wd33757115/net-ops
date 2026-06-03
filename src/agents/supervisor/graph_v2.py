@@ -11,6 +11,7 @@ import asyncio
 import os
 import re
 import time
+import uuid
 from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.messages import AIMessage
@@ -31,7 +32,6 @@ from src.common.config import get_settings
 from src.common.metrics import increment_counter, observe_histogram
 from src.common.ticket_utils import extract_ticket_id as _extract_ticket_id
 from src.core.logging import get_logger
-from src.infrastructure.db.postgres import get_postgres_saver
 from src.skill_system import get_skill_system
 from src.skill_system.router import SkillMatch
 from src.skills.registry import skill_registry
@@ -41,7 +41,7 @@ settings = get_settings()
 log = get_logger(__name__)
 
 AgentType = Literal["supervisor", "skill_executor", "knowledge_qa", "workflow_starter", "end"]
-PRE_PROCESS_TOP_K = 5
+PRE_PROCESS_TOP_K = settings.PRE_PROCESS_TOP_K
 # 语义路由低于此阈值不加载 Skill（避免知识问句误匹配 device-backup 等）
 SEMANTIC_SKILL_MIN_CONFIDENCE = float(os.getenv("SEMANTIC_SKILL_MIN_CONFIDENCE", "0.72"))
 
@@ -98,16 +98,22 @@ class SupervisorStateV2(TypedDict):
     workflow_type: str | None
     workflow_run_id: str | None
     langfuse_parent_trace_id: str | None
+    message_id: str | None
 
 
 def _get_query(state: SupervisorStateV2) -> str:
     return state["messages"][-1].content
 
 
-def _route_skills(query: str, top_k: int = PRE_PROCESS_TOP_K) -> list[SkillMatch]:
+def _route_skills(
+    query: str,
+    top_k: int = PRE_PROCESS_TOP_K,
+    user_role: str | None = None,
+    user_id: str | None = None,
+) -> list[SkillMatch]:
     skill_system = get_skill_system()
     if skill_system.router:
-        return skill_system.router.route(query, top_k=top_k)
+        return skill_system.router.route(query, top_k=top_k, user_role=user_role, user_id=user_id)
     return skill_system.route(query, top_k=top_k)
 
 
@@ -150,6 +156,11 @@ def _is_knowledge_question(query: str) -> bool:
         r"一份通知",
         r"公文写作",
         r"公文审核",
+        r"入党申请",
+        r"申请书",
+        r"给我一份",
+        r"写一份",
+        r"撰写",
     ]
     if any(re.search(p, q, re.IGNORECASE) for p in operational_patterns):
         return False
@@ -217,14 +228,14 @@ def _merge_params_with_deps(
     uploaded_file_path: str | None,
     ticket_id: str | None,
 ) -> dict[str, Any]:
-    params = dict(task.parameters)
-    if intermediate_results:
-        for dep in task.depends_on:
-            dep_result = intermediate_results.get(dep)
-            if isinstance(dep_result, dict):
-                params.setdefault(f"{dep}_output", dep_result)
-                if dep_result.get("data"):
-                    params.setdefault("previous_data", dep_result["data"])
+    from src.core.skills.chain_resolve import merge_upstream_params
+
+    params = merge_upstream_params(
+        task.skill_name,
+        dict(task.parameters),
+        list(task.depends_on),
+        intermediate_results,
+    )
     if uploaded_file_path:
         params.setdefault("uploaded_file_path", uploaded_file_path)
     if ticket_id:
@@ -351,6 +362,13 @@ def _build_send_payload(state: SupervisorStateV2, task: SkillTaskSpec) -> dict[s
     messages = state.get("messages") or []
     if messages:
         params.setdefault("user_query", messages[-1].content)
+    if state.get("message_id"):
+        params.setdefault("_message_id", state["message_id"])
+    if state.get("thread_id"):
+        params.setdefault("_thread_id", state["thread_id"])
+    if state.get("user_id"):
+        params.setdefault("_user_id", state["user_id"])
+    params.setdefault("_execution_source", "chat")
     return {
         "current_skill_task": task,
         "skill_decision": SkillDecision(
@@ -368,7 +386,12 @@ def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
     query = _get_query(state)
     log.info("supervisor_v2_pre_process", query_preview=query[:80])
 
-    raw_matches = _route_skills(query, top_k=PRE_PROCESS_TOP_K)
+    raw_matches = _route_skills(
+        query,
+        top_k=PRE_PROCESS_TOP_K,
+        user_role=state.get("user_role"),
+        user_id=state.get("user_id"),
+    )
     matches = _filter_skill_matches(query, raw_matches)
     if len(matches) < len(raw_matches):
         log.info(
@@ -411,7 +434,7 @@ def pre_process_node(state: SupervisorStateV2) -> SupervisorStateV2:
     )
 
     ticket_id = _extract_ticket_id(query)
-    ticket_update = {"ticket_id": ticket_id}
+    ticket_update = {"ticket_id": ticket_id, "message_id": str(uuid.uuid4())}
 
     return {
         **state,
@@ -633,6 +656,34 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
     log.debug("supervisor_v2_skill_executor_params", skill_name=skill_name, parameters=decision.parameters)
 
     try:
+        from src.skill_system.governance.rollout import is_skill_executable
+
+        ok, gov_msg = is_skill_executable(skill_name, user_id=state.get("user_id"))
+        if not ok:
+            log.warning("supervisor_v2_skill_executor_governance_blocked", skill_name=skill_name, reason=gov_msg)
+            return {
+                "intermediate_results": {
+                    skill_name: {"success": False, "message": gov_msg, "error": gov_msg},
+                },
+            }
+    except Exception:
+        pass
+
+    try:
+        from src.core.skills.rate_limit import check_skill_rate_limit
+
+        allowed, rate_msg = check_skill_rate_limit(state.get("user_id"), skill_name)
+        if not allowed:
+            log.warning("supervisor_v2_skill_executor_rate_limited", skill_name=skill_name, user_id=state.get("user_id"))
+            return {
+                "intermediate_results": {
+                    skill_name: {"success": False, "message": rate_msg, "error": rate_msg},
+                },
+            }
+    except Exception:
+        pass
+
+    try:
         from src.auth.rbac import role_to_permission_level
         from src.skill_system.security import PermissionLevel, get_security_manager
 
@@ -651,22 +702,31 @@ def skill_executor_v2_node(state: SupervisorStateV2) -> SupervisorStateV2:
         pass
 
     try:
+        from src.core.skills.result import ExecutionContext
+        from src.core.skills.runner import record_chat_skill_result
+
         result = asyncio.run(_execute_skill_decision(decision, bool(state.get("async_mode"))))
-        payload = {
-            "success": result.success,
-            "message": result.message,
-            "data": result.data,
-            "download_url": result.download_url,
-            "error": result.error,
-            "execution_time_ms": result.execution_time_ms,
-        }
-        tag = "success" if result.success else "error"
+        exec_context = ExecutionContext(
+            source="chat",
+            message_id=state.get("message_id"),
+            thread_id=state.get("thread_id"),
+            user_id=state.get("user_id"),
+            ticket_id=state.get("ticket_id"),
+        )
+        payload = record_chat_skill_result(
+            result,
+            skill_name=skill_name,
+            context=exec_context,
+            input_params=decision.parameters,
+        )
+        tag = "success" if payload.get("success") else "error"
         increment_counter("supervisor_v2_skill_execution_total", tags={"result": tag, "skill": skill_name})
         observe_histogram("supervisor_v2_skill_execution_duration_ms", (time.time() - t_start) * 1000)
         log.info(
             "supervisor_v2_skill_executor_complete",
             skill_name=skill_name,
-            success=result.success,
+            success=payload.get("success"),
+            execution_id=payload.get("execution_id"),
             duration_ms=int((time.time() - t_start) * 1000),
         )
 
@@ -772,6 +832,8 @@ def workflow_starter_node(state: SupervisorStateV2) -> SupervisorStateV2:
 
 def final_aggregator_node(state: SupervisorStateV2) -> SupervisorStateV2:
     """Map-Reduce 聚合：合并所有 Skill 执行结果为用户可见回复。"""
+    from src.core.workflows.artifacts import collect_download_links
+
     results = state.get("intermediate_results") or {}
     plan = state.get("execution_plan")
     lines = ["[OK] 多 Skill 协同执行完成\n"]
@@ -786,9 +848,14 @@ def final_aggregator_node(state: SupervisorStateV2) -> SupervisorStateV2:
         lines.append(f"### {skill_name}")
         lines.append(f"- 状态: {status}")
         lines.append(f"- 结果: {result.get('message', '')}")
-        if result.get("download_url"):
+        links = collect_download_links(result=result)
+        if links:
+            lines.append("- 下载:")
+            for link in links:
+                lines.append(f"  - [{link['label']}]({link['url']})")
+        elif result.get("download_url"):
             url = result["download_url"]
-            lines.append(f"- 下载: {url}")
+            lines.append(f"- 下载: [{url}]({url})")
         if result.get("error"):
             lines.append(f"- 错误: {result['error']}")
         lines.append("")
@@ -891,11 +958,9 @@ def build_supervisor_graph_v2(checkpointer=None):
 
 
 def get_supervisor_graph_v2():
-    try:
-        return build_supervisor_graph_v2(checkpointer=get_postgres_saver())
-    except Exception as exc:
-        log.warning("supervisor_v2_postgres_checkpointer_unavailable", error=str(exc))
-        return build_supervisor_graph_v2()
+    # SSE 聊天走 agent_graph.astream()，需要 checkpointer.aget_tuple。
+    # 同步 PostgresSaver 不支持 async API，会触发 NotImplementedError。
+    return build_supervisor_graph_v2()
 
 
 _compiled_graph_v2 = None

@@ -504,6 +504,7 @@ async def write_document(
     return {
         "success": True,
         "message": "公文撰写完成，已生成可下载 Word 文档",
+        "filename": filename,
         "data": {
             "document_type": document_json.doc_type,
             "purpose": purpose,

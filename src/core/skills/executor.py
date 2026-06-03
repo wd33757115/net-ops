@@ -18,8 +18,6 @@ import requests
 from src.core.skills.resolver import get_entry_output_mode, get_skill_cwd, resolve_entry_script
 from src.core.workflows.artifacts import make_file_artifact
 from src.infrastructure.storage.minio_client import get_minio_storage
-from src.observability.langfuse import record_skill_execution_span
-from src.observability.trace_context import extract_observability_context, strip_observability_keys
 
 logger = logging.getLogger(__name__)
 
@@ -288,77 +286,37 @@ def _run_legacy_task(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
     return task_func.run(**params)
 
 
-def execute_skill(skill_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """统一 Skill 执行入口。"""
+def _execute_skill_impl(skill_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """纯 Skill 执行（subprocess / legacy task），不含 observability 与持久化。"""
     params = dict(params or {})
-    obs = extract_observability_context(params)
-    trace_id = obs["trace_id"]
-    run_id = obs["run_id"]
-    parent_observation_id = obs["workflow_root_span_id"]
-    skill_params = strip_observability_keys(params)
     script = resolve_entry_script(skill_name)
 
-    try:
-        if script and script.name in (
-            "run.py",
-            "itsm_change_ticket_excel.py",
-            "itsm_callback.py",
-            "generate_change_ticket.py",
-        ):
-            try:
-                result = _run_subprocess_skill(skill_name, skill_params)
-            except SkillExecutionError:
-                raise
-            except Exception as exc:
-                logger.exception("Skill subprocess 异常 skill=%s", skill_name)
-                if skill_name in _LEGACY_TASK_NAMES:
-                    logger.warning("回退 legacy task: %s", skill_name)
-                    result = _run_legacy_task(skill_name, skill_params)
-                else:
-                    raise SkillExecutionError(str(exc)) from exc
-        elif skill_name in _LEGACY_TASK_NAMES or not script:
-            result = _run_legacy_task(skill_name, skill_params)
-        else:
-            result = _run_subprocess_skill(skill_name, skill_params)
+    if script and script.name in (
+        "run.py",
+        "itsm_change_ticket_excel.py",
+        "itsm_callback.py",
+        "generate_change_ticket.py",
+    ):
+        try:
+            return _run_subprocess_skill(skill_name, params)
+        except SkillExecutionError:
+            raise
+        except Exception as exc:
+            logger.exception("Skill subprocess 异常 skill=%s", skill_name)
+            if skill_name in _LEGACY_TASK_NAMES:
+                logger.warning("回退 legacy task: %s", skill_name)
+                return _run_legacy_task(skill_name, params)
+            raise SkillExecutionError(str(exc)) from exc
+    if skill_name in _LEGACY_TASK_NAMES or not script:
+        return _run_legacy_task(skill_name, params)
+    return _run_subprocess_skill(skill_name, params)
 
-        if not result.get("success", True):
-            record_skill_execution_span(
-                trace_id=trace_id,
-                skill_name=skill_name,
-                run_id=run_id,
-                parent_observation_id=parent_observation_id,
-                status="failed",
-                message=result.get("message") or result.get("error") or "Skill 失败",
-                input_params=skill_params,
-                output=result,
-                error=str(result.get("error") or result.get("message") or "Skill 失败"),
-            )
-        else:
-            record_skill_execution_span(
-                trace_id=trace_id,
-                skill_name=skill_name,
-                run_id=run_id,
-                parent_observation_id=parent_observation_id,
-                status="completed",
-                message=result.get("message") or "Skill 完成",
-                input_params=skill_params,
-                output={
-                    "success": True,
-                    "message": result.get("message"),
-                    "download_url": result.get("download_url"),
-                    "artifact_keys": list((result.get("artifacts") or {}).keys()),
-                },
-            )
-        return result
-    except Exception as exc:
-        record_skill_execution_span(
-            trace_id=trace_id,
-            skill_name=skill_name,
-            run_id=run_id,
-            parent_observation_id=parent_observation_id,
-            status="failed",
-            message=str(exc),
-            input_params=skill_params,
-            error=str(exc),
-        )
-        raise
+
+def execute_skill(skill_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """统一 Skill 执行入口（经 SkillRunner 标准化 + 持久化）。"""
+    from src.core.skills.runner import SkillRunner, _context_from_params
+
+    params = dict(params or {})
+    context = _context_from_params(dict(params))
+    result = SkillRunner.run(skill_name, params, context=context)
+    return result.to_legacy_dict()

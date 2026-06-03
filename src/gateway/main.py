@@ -79,6 +79,7 @@ from src.gateway.storage_api import router as storage_router
 from src.gateway.artifacts_api import router as artifacts_router
 from src.gateway.workflow_api import router as workflow_router
 from src.gateway.notification_api import router as notification_router
+from src.gateway.events_api import router as events_router
 from src.gateway.schemas import (
     AddMessageRequest,
     ChatFileUploadRequest,
@@ -186,6 +187,11 @@ async def lifespan(app: FastAPI):
 
         start_reload_listener()
         log.info("workflow_reload_listener_started")
+
+        from src.core.events.worker import start_event_consumers
+
+        start_event_consumers()
+        log.info("event_consumers_started")
     except Exception as e:
         log.warning("workflow_plugins_load_failed", error=str(e))
 
@@ -225,6 +231,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    try:
+        from src.core.events.worker import stop_event_consumers
+
+        stop_event_consumers()
+    except Exception:
+        pass
+
     if app.state.redis_pool:
         await app.state.redis_pool.disconnect()
         log.info("redis_pool_closed")
@@ -257,6 +270,7 @@ app.include_router(storage_router)
 app.include_router(artifacts_router)
 app.include_router(workflow_router)
 app.include_router(notification_router)
+app.include_router(events_router)
 register_exception_handlers(app)
 
 # =============================================================================

@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from 'react-query'
 import GrokShellLayout from '../components/layout/GrokShellLayout'
 import { GrokChip, GrokInfoBar, GrokRowAction, GrokToolBtn } from '../components/ui/GrokUi'
 import { useAuth } from '../context/AuthContext'
+import { useIsMobile } from '../hooks/useBreakpoint'
 import { ManagedUser, userAdminApi } from '../services/api'
 
 const ROLE_OPTIONS = [
@@ -60,6 +61,7 @@ function canDeleteUser(user: ManagedUser, users: ManagedUser[], currentUserId?: 
 }
 
 const UsersPage: React.FC = () => {
+  const isMobile = useIsMobile()
   const { user: currentUser } = useAuth()
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
@@ -303,15 +305,17 @@ const UsersPage: React.FC = () => {
           className="grok-table grok-table-users"
           rowKey="id"
           loading={isLoading}
+          size={isMobile ? 'small' : 'middle'}
           columns={columns}
           dataSource={filteredUsers}
-          scroll={{ x: hasLastLogin ? 920 : 760 }}
+          scroll={{ x: isMobile ? 640 : hasLastLogin ? 920 : 760 }}
           locale={{ emptyText }}
           pagination={{
-            pageSize: 10,
-            showSizeChanger: true,
+            pageSize: isMobile ? 8 : 10,
+            showSizeChanger: !isMobile,
+            simple: isMobile,
             hideOnSinglePage: true,
-            showTotal: (total) => `共 ${total} 人`,
+            showTotal: isMobile ? undefined : (total) => `共 ${total} 人`,
           }}
         />
       </section>

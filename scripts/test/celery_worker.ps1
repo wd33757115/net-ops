@@ -1,0 +1,37 @@
+# 单独启动 Celery Worker（Windows 必须 -P solo）
+param(
+    [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
+    [string]$LogLevel = "info",
+    [string]$Queues = "netops.default,netops.firewall,netops.device",
+    [string]$Pool = "solo",
+    [switch]$KeepExisting
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "_port_utils.ps1")
+Set-Location $ProjectRoot
+
+$venvPython = Join-Path $ProjectRoot "venv\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    Write-Host "[ERROR] venv not found. Run scripts\test\install.ps1" -ForegroundColor Red
+    exit 1
+}
+
+if ($Pool -ne "solo" -and $env:OS -match "Windows") {
+    Write-Host "[WARN] Windows 上 prefork 易触发 PermissionError WinError 5，已强制 -P solo" -ForegroundColor Yellow
+    $Pool = "solo"
+}
+
+if (-not $KeepExisting) {
+    Write-Host "Stopping existing Celery workers for this project ..." -ForegroundColor Yellow
+    Stop-ProjectCeleryWorkers -ProjectRoot $ProjectRoot
+    Start-Sleep -Seconds 1
+}
+
+Remove-Item Env:DJANGO_SETTINGS_MODULE -ErrorAction SilentlyContinue
+
+Write-Host "Starting Celery worker (pool=$Pool, queues=$Queues) ..." -ForegroundColor Cyan
+& $venvPython -m celery -A src.core.celery_tasks.celery_app worker `
+    --loglevel=$LogLevel `
+    -P $Pool `
+    -Q $Queues

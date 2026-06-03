@@ -21,6 +21,18 @@ class SkillTestRunRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class SkillRolloutUpdateRequest(BaseModel):
+    rollout_status: str | None = Field(None, description="draft/canary/stable/deprecated")
+    enabled_ratio: int | None = Field(None, ge=0, le=100, description="灰度比例 0-100")
+    min_platform_version: str | None = None
+    enabled: bool | None = None
+
+
+class ArchiveExecutionsRequest(BaseModel):
+    before_days: int | None = Field(None, ge=1, le=3650)
+    batch_size: int | None = Field(None, ge=1, le=5000)
+
+
 def _manager():
     return get_skill_manager()
 
@@ -29,6 +41,58 @@ def _ensure_success(result: dict, default_status: int = 400):
     if not result.get("success", True):
         raise HTTPException(status_code=default_status, detail=result.get("message", "操作失败"))
     return result
+
+
+@router.get("/catalog/stats")
+async def catalog_stats():
+    from src.skill_system.catalog.service import SkillCatalogService
+
+    return SkillCatalogService.get_stats()
+
+
+@router.post("/catalog/reindex")
+async def catalog_reindex(force: bool = False):
+    from src.skill_system import get_skill_system
+    from src.skill_system.catalog import sync_and_index
+
+    skill_system = get_skill_system()
+    stats = sync_and_index(skill_system.loader.list_all_metadata(), index=True)
+    if force:
+        from src.skill_system.catalog.service import SkillCatalogService
+
+        stats.update(SkillCatalogService.index_embeddings(force=True))
+    return {"success": True, **stats}
+
+
+@router.patch("/catalog/{skill_name}/rollout")
+async def update_skill_rollout(skill_name: str, request: SkillRolloutUpdateRequest):
+    from src.skill_system.catalog.repository import get_catalog_entry, update_catalog_rollout
+
+    if not get_catalog_entry(skill_name):
+        raise HTTPException(status_code=404, detail=f"Catalog 中不存在 Skill: {skill_name}")
+    updated = update_catalog_rollout(
+        skill_name,
+        rollout_status=request.rollout_status,
+        enabled_ratio=request.enabled_ratio,
+        min_platform_version=request.min_platform_version,
+        enabled=request.enabled,
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="更新灰度配置失败")
+    return {"success": True, "catalog": updated}
+
+
+@router.post("/governance/archive-executions")
+async def archive_skill_executions_api(request: ArchiveExecutionsRequest = ArchiveExecutionsRequest()):
+    from src.core.skills.archive import archive_skill_executions
+
+    result = archive_skill_executions(
+        before_days=request.before_days,
+        batch_size=request.batch_size,
+    )
+    if result.get("error"):
+        raise HTTPException(status_code=503, detail=result["error"])
+    return {"success": True, **result}
 
 
 @router.get("")

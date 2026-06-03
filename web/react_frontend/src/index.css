@@ -471,9 +471,41 @@ body {
 
 .grok-mobile-bar {
   flex-shrink: 0;
-  padding: 8px 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 8px 8px 8px 4px;
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
   border-bottom: 1px solid #ececec;
   background: #fff;
+  z-index: 30;
+}
+
+.grok-mobile-bar-menu {
+  flex-shrink: 0;
+}
+
+.grok-mobile-bar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grok-mobile-bar-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.grok-page-subtitle--mobile {
+  margin: -8px 0 12px;
 }
 
 .grok-messages-scroll,
@@ -743,8 +775,8 @@ body {
   opacity: 1;
 }
 
-/* Mobile */
-@media (max-width: 767px) {
+/* Mobile — 与 hooks/useBreakpoint MOBILE_BREAKPOINT_PX (768) 对齐 */
+@media (max-width: 768px) {
   .app-nav-sider.ant-layout-sider {
     display: none !important;
   }
@@ -2205,4 +2237,147 @@ body {
 .grok-table-users .ant-table-thead > tr > th:last-child,
 .grok-table-users .ant-table-tbody > tr > td:last-child {
   padding-right: 12px;
+}
+
+/* ── 登录页（移动端与桌面同视觉语言） ── */
+.grok-login-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 50%, #ecfeff 100%);
+  box-sizing: border-box;
+}
+
+.grok-login-card {
+  width: min(420px, 100%);
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08) !important;
+  border-radius: 12px !important;
+}
+
+.grok-login-hint {
+  margin-top: 16px !important;
+  margin-bottom: 0 !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+
+/* ── Skills / Workflow 移动端 ── */
+.grok-skills-tabs .ant-tabs-nav {
+  margin-bottom: 12px !important;
+}
+
+.grok-skills-tabs .ant-tabs-nav-wrap {
+  overflow: auto hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.grok-skills-tabs .ant-tabs-tab {
+  padding: 8px 12px !important;
+}
+
+@media (max-width: 768px) {
+  .grok-skill-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .grok-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px;
+  }
+
+  .grok-stat-grid-users {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .grok-stat-card {
+    padding: 12px 14px;
+  }
+
+  .grok-stat-value {
+    font-size: 20px;
+  }
+
+  .wf-canvas-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+    min-height: 360px;
+    height: auto;
+    max-height: min(70vh, 560px);
+  }
+
+  .wf-skill-palette {
+    border-right: none;
+    border-bottom: 1px solid #ececec;
+    max-height: 140px;
+  }
+
+  .wf-canvas-inspector {
+    border-top: 1px solid #ececec;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  .grok-workflow-wizard-wrap .ant-modal,
+  .grok-workflow-wizard-wrap:has(.grok-wizard-panel-canvas) .ant-modal,
+  .grok-workflow-wizard-wrap:has(.wf-wizard-canvas-wrap) .ant-modal {
+    width: 100% !important;
+    max-width: 100vw !important;
+    top: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .grok-workflow-wizard-wrap .ant-modal-content {
+    border-radius: 0 !important;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .grok-wizard-card {
+    width: 100% !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+  }
+
+  .grok-users-role-filter {
+    flex: 1 1 100%;
+    width: 100% !important;
+  }
+
+  .grok-message-body {
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  .grok-suggestions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .grok-suggestion {
+    width: 100%;
+    text-align: left;
+  }
+
+  .grok-sidebar.is-embedded {
+    width: 100%;
+  }
+
+  .ant-modal {
+    max-width: calc(100vw - 16px) !important;
+    margin: 8px auto !important;
+  }
+
+  .grok-info-bar {
+    font-size: 12px;
+  }
 }

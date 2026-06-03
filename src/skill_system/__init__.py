@@ -90,16 +90,21 @@ class SkillSystem:
 
         import os
 
+        from src.common.config import get_settings
+
+        cfg = get_settings()
         use_llm_judge = os.getenv("USE_SKILL_LLM_JUDGE", "false").lower() in (
             "1",
             "true",
             "yes",
         )
+        use_embedding = rag_service is not None or cfg.SKILL_CATALOG_ENABLED
         self.router = SemanticRouter(
             rag_service=rag_service,
             skill_loader=self.loader,
-            use_embedding=rag_service is not None,
+            use_embedding=use_embedding,
             use_llm_judge=use_llm_judge,
+            embedding_model=cfg.EMBEDDING_MODEL,
         )
 
         self._initialized = True
@@ -210,16 +215,21 @@ class SkillSystem:
         self.loader.scan_skill_dirs(dirs)
         import os
 
+        from src.common.config import get_settings
+
+        cfg = get_settings()
         use_llm_judge = os.getenv("USE_SKILL_LLM_JUDGE", "false").lower() in (
             "1",
             "true",
             "yes",
         )
+        use_embedding = rag_service is not None or cfg.SKILL_CATALOG_ENABLED
         self.router = SemanticRouter(
             rag_service=rag_service,
             skill_loader=self.loader,
-            use_embedding=rag_service is not None,
+            use_embedding=use_embedding,
             use_llm_judge=use_llm_judge,
+            embedding_model=cfg.EMBEDDING_MODEL,
         )
         self._initialized = True
 

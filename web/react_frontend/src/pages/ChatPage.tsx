@@ -223,6 +223,7 @@ const ChatPage: React.FC = () => {
           role={msg.role}
           content={msg.content}
           agentType={msg.agentType}
+          downloadUrl={msg.downloadUrl}
         />
       ))}
 

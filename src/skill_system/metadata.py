@@ -61,6 +61,13 @@ class SkillMetadata(BaseModel):
         default_factory=list,
         description="触发关键词列表，用于快速匹配"
     )
+    domain: str = Field("default", description="业务域（security/network/itsm/...）")
+    celery_queue: str | None = Field(None, description="Celery 队列名（如 netops.firewall）")
+    deprecated: bool = Field(False, description="是否已废弃")
+    min_permission_level: str = Field("user", description="最低执行权限：admin/operator/user")
+    enabled_ratio: float | None = Field(None, description="灰度比例 0~1；None 表示不在 SKILL.md 声明")
+    rollout_status: str | None = Field(None, description="draft/canary/stable/deprecated；None 表示不覆盖 Catalog")
+    min_platform_version: str | None = Field(None, description="最低平台版本要求")
 
     # I/O 规范
     inputs: list[InputSpec] = Field(default_factory=list, description="输入参数")
@@ -214,6 +221,13 @@ def parse_skill_md(file_path: Path, include_instructions: bool = True) -> SkillM
         author=frontmatter.get('author'),
         author_email=frontmatter.get('author_email'),
         triggers=frontmatter.get('triggers', []),
+        domain=frontmatter.get('domain') or frontmatter.get('category', 'general'),
+        celery_queue=frontmatter.get('celery_queue'),
+        deprecated=frontmatter.get('deprecated', False),
+        min_permission_level=str(frontmatter.get('min_permission_level', 'user')).lower(),
+        enabled_ratio=float(frontmatter['enabled_ratio']) if 'enabled_ratio' in frontmatter else None,
+        rollout_status=str(frontmatter['rollout_status']).lower() if frontmatter.get('rollout_status') else None,
+        min_platform_version=frontmatter.get('min_platform_version'),
         inputs=inputs,
         outputs=outputs,
         instructions=body.strip() if include_instructions else "",
@@ -281,6 +295,23 @@ def load_all_skill_metadata(skill_dirs: list[str]) -> list[SkillMetadata]:
 #   【推荐】## 实际执行说明 - Celery 任务映射等
 #   【推荐】## 安全规范 - 凭证处理、权限要求
 #   【必填】## 注意事项 - 关键注意事项
+
+# category → Catalog 治理默认值（与 celery_routing.DOMAIN_QUEUE_MAP 对齐）
+CATEGORY_GOVERNANCE: dict[str, dict[str, str]] = {
+    "security": {"domain": "security", "celery_queue": "netops.firewall"},
+    "network": {"domain": "network", "celery_queue": "netops.device"},
+    "itsm": {"domain": "itsm", "celery_queue": "netops.default"},
+    "analysis": {"domain": "general", "celery_queue": "netops.default"},
+    "general": {"domain": "general", "celery_queue": "netops.default"},
+}
+
+
+def resolve_category_governance(category: str) -> dict[str, str]:
+    """根据 category 推导 domain / celery_queue。"""
+    key = str(category or "general").lower()
+    return dict(CATEGORY_GOVERNANCE.get(key, CATEGORY_GOVERNANCE["general"]))
+
+
 SKILL_MD_TEMPLATE = """---
 name: {skill_name}
 version: {version}
@@ -288,6 +319,12 @@ description: {description}
 category: {category}
 tags: [{tags}]
 author: {author}
+domain: {domain}
+celery_queue: {celery_queue}
+min_permission_level: {min_permission_level}
+rollout_status: {rollout_status}
+enabled_ratio: {enabled_ratio}
+min_platform_version: "{min_platform_version}"
 triggers:
 {triggers_block}
 inputs:
@@ -298,6 +335,8 @@ references:
 {references_block}
 enabled: true
 fallback_to_rag: true
+entry_script: scripts/run.py
+entry_output: {entry_output}
 # celery_task: execute_skill_name_task  # 可选：指定 Celery 任务（留空则按命名约定自动推导）
 ---
 
@@ -389,6 +428,14 @@ def create_skill_md(
     inputs: list[dict] = None,
     outputs: list[dict] = None,
     references: list[dict] = None,
+    *,
+    domain: str | None = None,
+    celery_queue: str | None = None,
+    min_permission_level: str = "user",
+    rollout_status: str = "draft",
+    enabled_ratio: int = 0,
+    min_platform_version: str = "1.0.0",
+    entry_output: str = "none",
 ) -> str:
     """
     创建标准化的 SKILL.md 文件内容 (v2.0)
@@ -423,6 +470,10 @@ def create_skill_md(
             {"type": "rag", "source": "knowledge-base", "description": "RAG 知识源引用"},
         ]
 
+    gov = resolve_category_governance(category)
+    domain = domain or gov["domain"]
+    celery_queue = celery_queue or gov["celery_queue"]
+
     triggers_block = "\n".join([f'  - "{t}"' for t in triggers])
 
     inputs_block = yaml.dump(inputs, allow_unicode=True, default_flow_style=False, indent=2)
@@ -445,6 +496,13 @@ def create_skill_md(
         category=category,
         tags=", ".join(tags),
         author=author,
+        domain=domain,
+        celery_queue=celery_queue,
+        min_permission_level=min_permission_level,
+        rollout_status=rollout_status,
+        enabled_ratio=enabled_ratio,
+        min_platform_version=min_platform_version,
+        entry_output=entry_output,
         triggers_block=triggers_block,
         inputs_block=inputs_block,
         outputs_block=outputs_block,

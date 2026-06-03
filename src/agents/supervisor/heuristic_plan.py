@@ -25,7 +25,7 @@ _SEQUENTIAL_INTENT = re.compile(
     r"之后|然后|接着|完成后|先.+?后|再.{0,12}(?:巡检|备份|生成|检查)"
 )
 
-_DOCUMENT_TYPES = ("请示", "通知", "函", "报告", "总结", "纪要", "决定")
+_DOCUMENT_TYPES = ("请示", "通知", "函", "报告", "总结", "纪要", "决定", "入党申请书", "申请书")
 
 
 def extract_device_filter_params(query: str) -> dict[str, Any]:

@@ -1,7 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 os.environ["LLAMA_INDEX_CACHE_DIR"] = str(Path("./cache/llama_index").absolute())
 
@@ -23,6 +23,10 @@ log = get_logger(__name__)
 
 
 class SimpleEmbedding(BaseEmbedding):
+    """MD5 伪向量（384 维），仅作 EMBEDDING_MODEL 不可用时的降级。"""
+
+    EMBED_DIM: ClassVar[int] = 384
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         import hashlib
@@ -31,6 +35,10 @@ class SimpleEmbedding(BaseEmbedding):
     @classmethod
     def class_name(cls) -> str:
         return "SimpleEmbedding"
+
+    @property
+    def embed_dim(self) -> int:
+        return self.EMBED_DIM
 
     async def _aget_query_embedding(self, query: str) -> list[float]:
         return self._get_query_embedding(query)
@@ -49,7 +57,110 @@ class SimpleEmbedding(BaseEmbedding):
 
     def _simple_hash(self, text: str) -> list[float]:
         hash_val = self._hash_func(text.encode('utf-8')).digest()
-        return [float(b) / 255.0 for b in hash_val] + [0.0] * (384 - 16)
+        return [float(b) / 255.0 for b in hash_val] + [0.0] * (self.EMBED_DIM - 16)
+
+
+class ConfiguredEmbedding(BaseEmbedding):
+    """与 Skill Catalog 一致的 BGE（settings.EMBEDDING_MODEL）；失败时降级 SimpleEmbedding。"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._fallback = SimpleEmbedding()
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "ConfiguredEmbedding"
+
+    def _encode(self, text: str) -> list[float]:
+        from src.infrastructure.embedding.embedder import encode_text
+
+        vec = encode_text(text)
+        if vec:
+            return vec
+        return self._fallback._get_query_embedding(text)
+
+    async def _aget_query_embedding(self, query: str) -> list[float]:
+        return self._get_query_embedding(query)
+
+    async def _aget_text_embedding(self, text: str) -> list[float]:
+        return self._get_text_embedding(text)
+
+    def _get_query_embedding(self, query: str) -> list[float]:
+        return self._encode(query)
+
+    def _get_text_embedding(self, text: str) -> list[float]:
+        return self._encode(text)
+
+    def _get_text_embeddings(self, texts: list[str]) -> list[list[float]]:
+        from src.infrastructure.embedding.embedder import encode_batch
+
+        batch = encode_batch(texts)
+        if batch and len(batch) == len(texts):
+            return batch
+        return [self._encode(t) for t in texts]
+
+
+def _resolve_embed_model() -> BaseEmbedding:
+    settings = get_settings()
+    try:
+        from src.infrastructure.embedding.embedder import encode_text
+
+        probe = encode_text("dimension probe")
+        if probe:
+            log.info(
+                "rag_service_embed_model",
+                model=settings.EMBEDDING_MODEL,
+                dim=len(probe),
+            )
+            return ConfiguredEmbedding()
+    except Exception as exc:
+        log.warning("rag_service_bge_unavailable", error=str(exc))
+    log.warning("rag_service_using_simple_embedding_fallback")
+    return SimpleEmbedding()
+
+
+def _collection_embedding_dim(collection) -> int | None:
+    try:
+        meta = getattr(collection, "metadata", None) or {}
+        dim = meta.get("embedding_dim") or meta.get("dimension")
+        if dim is not None:
+            return int(dim)
+        peek = collection.peek(limit=1)
+        embeddings = peek.get("embeddings") if isinstance(peek, dict) else None
+        if embeddings and embeddings[0]:
+            return len(embeddings[0])
+    except Exception:
+        pass
+    return None
+
+
+def _ensure_collection_embedding_dim(chroma_client, collection_name: str, embed_model: BaseEmbedding) -> Any:
+    """若 Chroma 存量向量维度与当前 embed 模型不一致，则重建空 collection。"""
+    expected = getattr(embed_model, "embed_dim", None)
+    if expected is None:
+        try:
+            expected = len(embed_model.get_query_embedding("probe"))
+        except Exception:
+            expected = None
+
+    collection = chroma_client.get_or_create_collection(collection_name)
+    if expected is None:
+        return collection
+
+    actual = _collection_embedding_dim(collection)
+    if actual is not None and actual != expected:
+        log.warning(
+            "rag_service_embedding_dim_mismatch",
+            collection=collection_name,
+            expected=expected,
+            actual=actual,
+        )
+        try:
+            chroma_client.delete_collection(collection_name)
+        except Exception as exc:
+            log.warning("rag_service_delete_collection_failed", error=str(exc))
+        collection = chroma_client.get_or_create_collection(collection_name)
+    return collection
 
 
 class UnifiedRAGService:
@@ -75,14 +186,17 @@ class UnifiedRAGService:
         self._initialize()
 
     def _initialize(self):
-        log.info("rag_service_init_begin", embedding="SimpleEmbedding")
-        self._embed_model = SimpleEmbedding()
+        self._embed_model = _resolve_embed_model()
+        model_label = self._embed_model.class_name()
+        log.info("rag_service_init_begin", embedding=model_label)
 
         persist_dir = Path("./vectorstore/chroma_db")
         persist_dir.mkdir(parents=True, exist_ok=True)
 
         chroma_client = chromadb.PersistentClient(path=str(persist_dir))
-        chroma_collection = chroma_client.get_or_create_collection("netops_knowledge")
+        chroma_collection = _ensure_collection_embedding_dim(
+            chroma_client, "netops_knowledge", self._embed_model
+        )
         collection_count = chroma_collection.count()
 
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
@@ -145,8 +259,7 @@ class UnifiedRAGService:
 
     def reindex_from_disk(self) -> dict[str, Any]:
         """清空并重建向量索引（读取 knowledge_base/）。"""
-        if self._embed_model is None:
-            self._embed_model = SimpleEmbedding()
+        self._embed_model = _resolve_embed_model()
 
         kb_path = Path("./knowledge_base")
         persist_dir = Path("./vectorstore/chroma_db")
@@ -159,7 +272,9 @@ class UnifiedRAGService:
             log.warning("rag_service_delete_collection_failed", error=str(exc))
 
         self._index = None
-        chroma_collection = chroma_client.get_or_create_collection("netops_knowledge")
+        chroma_collection = _ensure_collection_embedding_dim(
+            chroma_client, "netops_knowledge", self._embed_model
+        )
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
@@ -243,7 +358,17 @@ class UnifiedRAGService:
         retriever = self._index.as_retriever(
             similarity_top_k=top_k
         )
-        nodes = retriever.retrieve(query)
+        try:
+            nodes = retriever.retrieve(query)
+        except Exception as exc:
+            if "dimension" in str(exc).lower():
+                log.warning("rag_service_retrieve_dim_error", error=str(exc))
+                self._index = None
+                self._initialize()
+                retriever = self._index.as_retriever(similarity_top_k=top_k)
+                nodes = retriever.retrieve(query)
+            else:
+                raise
         return nodes
 
     def retrieve_formatted(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.common.config import get_settings
 from src.core.logging import get_logger
 from src.core.workflows.artifacts import normalize_step_result
 from src.core.workflows.events import publish_workflow_event
@@ -67,6 +68,32 @@ def _pop_wf_trace(run_id: str):
 
 
 class WorkflowEngine:
+    @classmethod
+    def _publish_workflow_notify(cls, event_type: str, run_id: str, payload: dict[str, Any]) -> bool:
+        """发布 Workflow 通知领域事件；返回 True 表示无需再走直接 create_notification。"""
+        settings = get_settings()
+        if not settings.EVENT_BUS_ENABLED:
+            return False
+        run = get_workflow_run(run_id)
+        enriched = dict(payload)
+        if run:
+            enriched.setdefault("user_id", run.user_id)
+            enriched.setdefault("thread_id", run.thread_id)
+            enriched.setdefault("ticket_id", run.ticket_id)
+        trace_id = (run.context or {}).get("langfuse_trace_id") if run else None
+        from src.core.events.publishers import publish_workflow_event
+
+        msg_id = publish_workflow_event(
+            event_type,
+            run_id=run_id,
+            trace_id=str(trace_id) if trace_id else None,
+            payload=enriched,
+        )
+        # 默认双写：EventBus 发布成功仍走 sync create_notification，避免 Consumer 未启动时无通知
+        if msg_id and not settings.EVENT_BUS_DIRECT_NOTIFY_FALLBACK:
+            return True
+        return False
+
     @classmethod
     def ensure_wf_trace(cls, run_id: str):
         """Celery Worker 内恢复 Langfuse Workflow trace。"""
@@ -441,8 +468,23 @@ class WorkflowEngine:
         body_tpl = oc.notification_body if oc else "流程已完成。"
         title = str(resolve_value(title_tpl, env) if title_tpl else "Workflow 已完成")
         body = str(resolve_value(body_tpl, env) if body_tpl else "流程已完成。")
-        from src.core.workflows.artifacts import notification_download_payload
+        from src.core.workflows.artifacts import collect_download_links, notification_download_payload
 
+        links = collect_download_links(artifacts=artifacts)
+        if links:
+            body = body.rstrip() + "\n\n" + "\n".join(f"下载 {lnk['label']}: {lnk['url']}" for lnk in links)
+
+        if cls._publish_workflow_notify(
+            "workflow.completed",
+            run_id,
+            {
+                "title": title,
+                "body": body,
+                "artifacts": artifacts,
+                "level": (oc.notification_level if oc else "success"),
+            },
+        ):
+            return
         create_notification(
             user_id=run.user_id,
             title=title,
@@ -460,9 +502,26 @@ class WorkflowEngine:
         if not run or not run.user_id:
             return
         label = step.step_name.replace("_", " ")
-        from src.core.workflows.artifacts import notification_download_payload
+        from src.core.workflows.artifacts import collect_download_links, notification_download_payload
 
         body = str(result.get("message") or step.skill_name)
+
+        links = collect_download_links(result=result if isinstance(result, dict) else None)
+        if links:
+            body = body.rstrip() + "\n\n" + "\n".join(f"下载 {lnk['label']}: {lnk['url']}" for lnk in links)
+
+        if cls._publish_workflow_notify(
+            "workflow.step.completed",
+            run_id,
+            {
+                "step_name": step.step_name,
+                "step_label": label,
+                "skill_name": step.skill_name,
+                "notify_user": True,
+                "result": result if isinstance(result, dict) else None,
+            },
+        ):
+            return
         create_notification(
             user_id=run.user_id,
             title=f"Workflow 步骤完成 — {label} ({run.ticket_id or run_id[:8]})",
@@ -480,6 +539,15 @@ class WorkflowEngine:
             return
         template = get_template(run.template_name)
         if template and not template.on_complete.notify_on_failure:
+            return
+        if cls._publish_workflow_notify(
+            "workflow.failed",
+            run_id,
+            {
+                "error": error,
+                "notify_on_failure": template.on_complete.notify_on_failure if template else True,
+            },
+        ):
             return
         create_notification(
             user_id=run.user_id,

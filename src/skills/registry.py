@@ -523,7 +523,8 @@ class SkillRegistry:
                     task_func = getattr(tasks, task_name, None)
                     if task_func and hasattr(task_func, 'apply_async'):
                         params = self._prepare_task_params(task_name, validated_params.model_dump())
-                        task_result = task_func.apply_async(kwargs=params)
+                        queue = self._resolve_celery_queue(skill.name)
+                        task_result = task_func.apply_async(kwargs=params, queue=queue)
                         celery_task_id = task_result.task_id
                         logger.info(f"[Celery] FileBasedSkill 任务已提交: task_id={celery_task_id}")
                         return SkillResult(
@@ -556,7 +557,11 @@ class SkillRegistry:
                 )
 
         try:
-            task_result = skill.handler.apply_async(kwargs=validated_params.model_dump())
+            queue = self._resolve_celery_queue(skill.name)
+            task_result = skill.handler.apply_async(
+                kwargs=validated_params.model_dump(),
+                queue=queue,
+            )
             celery_task_id = task_result.task_id
             logger.info(f"[Celery] 任务已提交: task_id={celery_task_id}")
         except Exception as e:
@@ -649,11 +654,13 @@ class SkillRegistry:
 
         # Celery 异步执行：使用 apply_async 提交任务
         try:
+            queue = self._resolve_celery_queue(skill.name)
             task_result = skill.handler.apply_async(
-                kwargs=validated_params.model_dump()
+                kwargs=validated_params.model_dump(),
+                queue=queue,
             )
             celery_task_id = task_result.task_id
-            logger.info(f"[Celery] 任务已提交: task_id={celery_task_id}")
+            logger.info(f"[Celery] 任务已提交: task_id={celery_task_id} queue={queue}")
         except Exception as e:
             logger.error(f"[Celery] 任务提交失败: {e}")
             return SkillResult(
@@ -785,6 +792,12 @@ class SkillRegistry:
         "itsm-change-ticket-writer": "execute_itsm_change_ticket_task",
         "itsm-callback": "execute_itsm_callback_task",
     }
+
+    @staticmethod
+    def _resolve_celery_queue(skill_name: str) -> str:
+        from src.core.skills.celery_routing import resolve_skill_celery_queue
+
+        return resolve_skill_celery_queue(skill_name)
 
     @classmethod
     def _resolve_celery_task(cls, skill_name: str, metadata=None) -> str | None:

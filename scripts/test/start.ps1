@@ -245,12 +245,14 @@ if ($jwtSecret) { $celeryEnv["JWT_SECRET_KEY"] = $jwtSecret }
 foreach ($k in @("LANGFUSE_HOST", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")) {
     if ($dotEnv.ContainsKey($k)) { $celeryEnv[$k] = $dotEnv[$k] }
 }
-$celeryCmd = '& ''' + $py + ''' -m celery -A src.core.celery_tasks.celery_app worker --loglevel=info -P solo'
+$celeryCmd = '& ''' + $py + ''' -m celery -A src.core.celery_tasks.celery_app worker --loglevel=info -P solo -Q netops.default,netops.firewall,netops.device'
 New-LauncherScript -Path $celeryLauncher -WorkingDirectory $ProjectRoot -EnvVars $celeryEnv -CommandLine $celeryCmd -LogFile $celeryLog -PreCommands @(
     'Remove-Item Env:DJANGO_SETTINGS_MODULE -ErrorAction SilentlyContinue'
 )
 $pids["celery"] = (Start-LauncherProcess -LauncherPath $celeryLauncher).Id
 Write-ColorOutput "  [OK] Celery PID=$($pids['celery']) (log: celery.log)" "Green"
+Write-ColorOutput "  [TIP] Celery 已在后台运行，勿再手动开第二个 Worker（会 pidbox 冲突）" "Gray"
+Write-ColorOutput "        调试 Celery 请用: scripts\test\celery_worker.ps1" "Gray"
 if ($dockerOk -and -not $SkipMiddleware) {
     Start-Sleep -Seconds 8
 }
@@ -296,7 +298,17 @@ if ($DevMode) {
     $reactCmd = "npm run dev -- --host 0.0.0.0 --port $ReactPort --strictPort"
     Write-ColorOutput "  Mode: Vite dev (pass -DevMode explicitly)" "Gray"
 } else {
-    $reactCmd = "npm run build; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; npm run preview -- --host 0.0.0.0 --port $ReactPort --strictPort"
+    Write-ColorOutput "  Building React (preview mode, may take 1-3 min)..." "Gray"
+    Push-Location $reactDir
+    $env:VITE_DJANGO_BACKEND_URL = "http://localhost:$DjangoPort"
+    npm run build 2>&1 | ForEach-Object { Write-Host "    $_" }
+    if ($LASTEXITCODE -ne 0) {
+        Pop-Location
+        Write-ColorOutput "  [ERROR] npm run build failed. See output above." "Red"
+        exit 1
+    }
+    Pop-Location
+    $reactCmd = "npm run preview -- --host 0.0.0.0 --port $ReactPort --strictPort"
     Write-ColorOutput "  Mode: Vite preview (production build, stable UI)" "Gray"
 }
 New-LauncherScript -Path $reactLauncher -WorkingDirectory $reactDir -EnvVars @{
@@ -307,14 +319,24 @@ Write-ColorOutput "  [OK] React PID=$($pids['react'])" "Green"
 
 $pids | ConvertTo-Json | Set-Content -Path $pidFile -Encoding UTF8
 
-Write-ColorOutput "Waiting for services (up to 120s)..." "Yellow"
-$reactOk = Wait-ReactReady -Port $ReactPort -TimeoutSec 120
-$bffOk = Wait-HttpOk -Url "http://localhost:$DjangoPort/api/health/" -TimeoutSec 120
-$apiOk = Wait-HttpOk -Url "http://localhost:$FastAPIPort/health" -TimeoutSec 180
+Write-ColorOutput "Waiting for services (parallel, up to 300s)..." "Yellow"
+$ready = Wait-ServicesReady -ReactPort $ReactPort -DjangoPort $DjangoPort -FastAPIPort $FastAPIPort -TimeoutSec 300
+$reactOk = $ready.React
+$bffOk = $ready.Bff
+$apiOk = $ready.Api
 
 if (-not $reactOk) {
-    Write-ColorOutput "  [ERROR] React dev server not ready or wrong mode. Check $reactLog" "Red"
-    Write-ColorOutput "  Hint: ensure Docker netops-react is stopped" "Yellow"
+    Write-ColorOutput "  [ERROR] React not ready. Check $reactLog" "Red"
+    Write-ColorOutput "  Hint: use -DevMode for faster Vite dev server" "Yellow"
+    exit 1
+}
+if (-not $apiOk) {
+    Write-ColorOutput "  [ERROR] FastAPI not ready. Check $logDir\fastapi.log" "Red"
+    Write-ColorOutput "  Hint: look for ImportError / PydanticUserError at startup" "Yellow"
+    exit 1
+}
+if (-not $bffOk) {
+    Write-ColorOutput "  [ERROR] Django BFF not ready. Check $logDir\django.log" "Red"
     exit 1
 }
 

@@ -13,6 +13,12 @@ tags:
 - 纪要
 - 报告
 author: NetOps Team
+domain: general
+celery_queue: netops.default
+min_permission_level: user
+rollout_status: stable
+enabled_ratio: 100
+min_platform_version: "1.0.0"
 execution_mode: sync
 triggers:
 - 公文写作
@@ -20,6 +26,10 @@ triggers:
 - 写请示
 - 写一份请示
 - 一份请示
+- 入党申请书
+- 申请书
+- 给我一份
+- 写一份
 - 写通知
 - 写一份通知
 - 写函
@@ -58,7 +68,7 @@ outputs:
   type: download
   description: GB/T 9704-2012 规范 Word 文件
 enabled: true
-fallback_to_rag: true
+fallback_to_rag: false
 ---
 
 # 公文写作技能

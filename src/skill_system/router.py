@@ -92,51 +92,79 @@ class SemanticRouter:
                 logger.warning(f"LLM 初始化失败: {e}")
                 self.use_llm_judge = False
 
-    def route(self, query: str, top_k: int = 3) -> list[SkillMatch]:
+    def route(
+        self,
+        query: str,
+        top_k: int = 3,
+        *,
+        user_role: str | None = None,
+        user_id: str | None = None,
+    ) -> list[SkillMatch]:
         """
         路由用户查询
 
         Args:
             query: 用户查询
             top_k: 返回前 k 个匹配结果
+            user_role: 用户角色（L2 RBAC 过滤）
 
         Returns:
             List[SkillMatch]: 匹配的 Skill 列表（按置信度降序）
         """
+        from src.common.config import get_settings
+        from src.skill_system.tiered_router import (
+            catalog_allowed_skills,
+            catalog_semantic_match,
+            filter_matches_by_allowed,
+            l2_expand_candidates,
+        )
+
+        settings = get_settings()
+        allowed = catalog_allowed_skills(user_role, user_id=user_id)
         matches = []
 
-        # Stage 1: 触发词/关键词快速匹配
+        # L1: 触发词/关键词快速匹配
         matches.extend(self._keyword_match(query))
+        matches = filter_matches_by_allowed(matches, allowed)
 
-        # 已有高置信触发词命中时跳过 Embedding，避免首次请求加载 BGE 模型阻塞聊天（数分钟）
         has_trigger_hit = any(
             m.match_type == "trigger" and m.confidence >= 0.9 for m in matches
         )
 
-        # Stage 2: Embedding 语义匹配（可选，性能开销较大）
+        # L2: 域/标签扩展候选（无高置信触发词时）
+        l2_candidates = l2_expand_candidates(query, allowed) if settings.SKILL_CATALOG_USE_TIERED_ROUTING else allowed
+
+        # L3: Catalog 预计算语义向量（不对全量 Skill 实时 encode）
         if self.use_embedding and not has_trigger_hit:
-            semantic_matches = self._semantic_match(query, top_k)
-            for match in semantic_matches:
-                # 合并结果，提高置信度
-                existing = next(
-                    (m for m in matches if m.skill_name == match.skill_name),
-                    None
+            if settings.SKILL_CATALOG_ENABLED and settings.SKILL_CATALOG_USE_TIERED_ROUTING:
+                semantic_matches = catalog_semantic_match(
+                    query,
+                    top_k,
+                    allowed_skills=l2_candidates if l2_candidates else allowed,
                 )
+            else:
+                semantic_matches = self._semantic_match(query, top_k)
+            for match in semantic_matches:
+                existing = next((m for m in matches if m.skill_name == match.skill_name), None)
                 if existing:
                     existing.confidence = max(existing.confidence, match.confidence)
+                    if match.confidence > existing.confidence:
+                        existing.match_type = match.match_type
+                        existing.reason = match.reason
                 else:
                     matches.append(match)
+            matches = filter_matches_by_allowed(matches, allowed)
 
-        # Stage 3: LLM Judge 精准判断（可选）
+        # L4: LLM Judge（可选）
         if self.use_llm_judge and matches:
             matches = self._llm_judge(query, matches)
 
-        # 过滤掉已禁用的 Skill
         matches = [m for m in matches if self._is_skill_enabled(m.skill_name)]
+        matches = filter_matches_by_allowed(matches, allowed)
 
-        # 按置信度排序，取前 k 个
         matches.sort(key=lambda x: x.confidence, reverse=True)
-        return matches[:top_k]
+        hard_limit = settings.PRE_PROCESS_HARD_LIMIT
+        return matches[: min(top_k, hard_limit)]
 
     def _is_skill_enabled(self, skill_name: str) -> bool:
         """检查 Skill 是否启用"""
@@ -349,20 +377,28 @@ class SemanticRouter:
             return candidates  # Fallback: 返回原始候选列表
 
     def _get_embedding(self, text: str) -> list[float]:
-        """获取文本 embedding"""
+        """获取文本 embedding（优先共享 embedder）。"""
         if text in self._embedding_cache:
             return self._embedding_cache[text]
+        try:
+            from src.infrastructure.embedding.embedder import encode_text
+
+            embedding = encode_text(text)
+            if embedding:
+                self._embedding_cache[text] = embedding
+                return embedding
+        except Exception as exc:
+            logger.debug("shared embedder unavailable: %s", exc)
 
         try:
             if self._embedder is None:
                 from sentence_transformers import SentenceTransformer
+
                 self._embedder = SentenceTransformer(self.embedding_model)
 
             embedding = self._embedder.encode(text).tolist()
-
             self._embedding_cache[text] = embedding
             return embedding
-
         except Exception as e:
             logger.error(f"Embedding 计算失败: {e}")
             return []

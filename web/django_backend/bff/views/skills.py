@@ -178,3 +178,59 @@ async def proxy_skill_detail(request: HttpRequest, skill_name: str) -> JsonRespo
         request_id=request.bff_request_id,
         extra_headers=headers,
     )
+
+
+@csrf_exempt
+@require_jwt
+@sync_bff_view
+async def proxy_catalog_stats(request: HttpRequest) -> JsonResponse:
+    return await proxy_to_fastapi(
+        method="GET",
+        fastapi_path="/api/v1/skills/catalog/stats",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@require_role("admin")
+@sync_bff_view
+async def proxy_catalog_reindex(request: HttpRequest) -> JsonResponse:
+    force = request.GET.get("force", "false").lower() in ("1", "true", "yes")
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path=f"/api/v1/skills/catalog/reindex?force={str(force).lower()}",
+        request_id=request.bff_request_id,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@require_role("admin")
+@sync_bff_view
+async def proxy_catalog_rollout(request: HttpRequest, skill_name: str) -> JsonResponse:
+    data = parse_json_body(request)
+    return await proxy_to_fastapi(
+        method="PATCH",
+        fastapi_path=f"/api/v1/skills/catalog/{skill_name}/rollout",
+        request_id=request.bff_request_id,
+        data=data,
+        extra_headers=forward_client_headers(request),
+    )
+
+
+@csrf_exempt
+@require_jwt
+@require_role("admin")
+@sync_bff_view
+async def proxy_governance_archive_executions(request: HttpRequest) -> JsonResponse:
+    data = parse_json_body(request)
+    return await proxy_to_fastapi(
+        method="POST",
+        fastapi_path="/api/v1/skills/governance/archive-executions",
+        request_id=request.bff_request_id,
+        data=data,
+        extra_headers=forward_client_headers(request),
+    )

@@ -87,6 +87,10 @@ def get_entry_output_mode(skill_name: str) -> str:
     return "file"
 
 
+def get_skill_version(skill_name: str) -> str:
+    return str(_load_frontmatter(skill_name).get("version") or "0.0.0")
+
+
 def get_skill_cwd(skill_name: str) -> Path:
     script = resolve_entry_script(skill_name)
     if script:

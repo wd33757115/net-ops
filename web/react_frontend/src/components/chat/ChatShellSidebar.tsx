@@ -20,6 +20,8 @@ import { useAuth } from '../../context/AuthContext'
 import { useChatStore, Conversation } from '../../store/useChatStore'
 
 interface ChatShellSidebarProps {
+  /** Drawer 内嵌模式：隐藏折叠按钮、始终展开 */
+  embedded?: boolean
   onNavigate?: () => void
 }
 
@@ -53,12 +55,13 @@ function userInitials(username: string): string {
   return username.slice(0, 2).toUpperCase()
 }
 
-const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ onNavigate }) => {
+const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ embedded = false, onNavigate }) => {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, logout } = useAuth()
   const footerRef = useRef<HTMLDivElement>(null)
   const [collapsed, setCollapsed] = useState(false)
+  const isCollapsed = embedded ? false : collapsed
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -179,7 +182,7 @@ const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ onNavigate }) => {
   const displayEmail = user?.email || ''
 
   return (
-    <aside className={`grok-sidebar${collapsed ? ' is-collapsed' : ''}`}>
+    <aside className={`grok-sidebar${isCollapsed ? ' is-collapsed' : ''}${embedded ? ' is-embedded' : ''}`}>
       <div className="grok-sidebar-header">
         <button
           type="button"
@@ -188,14 +191,16 @@ const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ onNavigate }) => {
           aria-label="欢迎页"
           title="欢迎页"
         />
-        <button
-          type="button"
-          className="grok-collapse-btn"
-          onClick={() => setCollapsed((v) => !v)}
-          aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
-        >
-          {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-        </button>
+        {!embedded && (
+          <button
+            type="button"
+            className="grok-collapse-btn"
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={isCollapsed ? '展开侧栏' : '收起侧栏'}
+          >
+            {isCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          </button>
+        )}
       </div>
 
       <nav className="grok-nav-list">
@@ -209,16 +214,16 @@ const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ onNavigate }) => {
               type="button"
               className={`grok-nav-item${isActive || isSearchActive ? ' is-active' : ''}`}
               onClick={() => handleNavClick(item)}
-              title={collapsed ? item.label : undefined}
+              title={isCollapsed ? item.label : undefined}
             >
               <span className="grok-nav-icon">{item.icon}</span>
-              {!collapsed && <span className="grok-nav-label">{item.label}</span>}
+              {!isCollapsed && <span className="grok-nav-label">{item.label}</span>}
             </button>
           )
         })}
       </nav>
 
-      {!collapsed && (
+      {!isCollapsed && (
         <div className="grok-history-section">
           <button
             type="button"
@@ -299,7 +304,7 @@ const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ onNavigate }) => {
       )}
 
       <div className="grok-sidebar-footer" ref={footerRef}>
-        {userMenuOpen && !collapsed && (
+        {userMenuOpen && !isCollapsed && (
           <div className="grok-user-menu" role="menu">
             <button type="button" className="grok-user-menu-item" onClick={() => go('/status')}>
               <SettingOutlined />
@@ -337,7 +342,7 @@ const ChatShellSidebar: React.FC<ChatShellSidebarProps> = ({ onNavigate }) => {
           <Avatar size={36} className="grok-user-avatar">
             {userInitials(displayName)}
           </Avatar>
-          {!collapsed && (
+          {!isCollapsed && (
             <div className="grok-user-info">
               <span className="grok-user-name">{displayName}</span>
               <span className="grok-user-email">{displayEmail}</span>
