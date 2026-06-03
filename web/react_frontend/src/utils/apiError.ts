@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 /** 统一 API 错误解析（P2：code + request_id） */
 
 export interface StructuredApiErrorBody {

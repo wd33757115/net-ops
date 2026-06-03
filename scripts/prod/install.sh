@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 #!/usr/bin/env bash
 # 生产环境 - 安装与部署（Linux）
 set -euo pipefail

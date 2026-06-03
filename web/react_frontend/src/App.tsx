@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 import React from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import AppLayout from './components/Layout/AppLayout'

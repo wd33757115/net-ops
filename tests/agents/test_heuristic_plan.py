@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """heuristic_plan 与 supervisor Workflow 路由单元测试。"""
 
 from unittest.mock import MagicMock, patch

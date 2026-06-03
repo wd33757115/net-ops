@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """触发词宽松匹配单元测试。"""
 
 from src.skill_system.trigger_match import trigger_matches

@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """LLM 结果分析 Skill：读取上游 Skill/Workflow 步骤 JSON，调用 LLM 生成结构化分析报告。"""
 from __future__ import annotations
 

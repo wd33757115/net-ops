@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # 生产冒烟测试（BFF 健康 / 鉴权 / 诊断 / Workflow 模板 / viewer RBAC）
 param(
     [string]$BffBase = "http://127.0.0.1:8001",

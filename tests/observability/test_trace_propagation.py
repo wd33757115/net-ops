@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """P3：Langfuse trace 在 Celery / Skill 路径的传播测试。"""
 
 from __future__ import annotations

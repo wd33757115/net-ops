@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """公文 DOCX 渲染：结构化 JSON → Word（优先 python-docx 直排）。"""
 
 from __future__ import annotations

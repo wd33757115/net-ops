@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """从 device-backup Skill scripts 目录加载 netops_agent_tools。"""
 
 from __future__ import annotations

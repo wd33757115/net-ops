@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """工单号提取单元测试。"""
 
 from src.common.ticket_utils import extract_ticket_id

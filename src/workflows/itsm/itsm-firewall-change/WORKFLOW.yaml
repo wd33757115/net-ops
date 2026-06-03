@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 name: itsm-firewall-change
 description: ITSM 防火墙策略变更（步骤随 context 动态解析）
 version: "1.0"

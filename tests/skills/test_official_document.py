@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """公文写作 Skill：JSON Schema 与 DOCX 渲染（无 LLM）。"""
 
 from src.skills.official_document.render import ensure_default_templates, render_document_bytes

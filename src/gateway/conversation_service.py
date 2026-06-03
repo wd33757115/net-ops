@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """
 对话服务层 - 处理对话持久化和LLM总结
 """

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """
 基于 SKILL.md 的 Skill 实现（注册到 skill_registry 供 Supervisor 执行）。
 """

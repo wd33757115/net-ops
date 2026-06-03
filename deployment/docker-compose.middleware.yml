@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # 测试/开发环境：仅启动中间件（PostgreSQL、Redis、RabbitMQ、MinIO、Qdrant）
 # 应用层（FastAPI / Django / React）由 scripts/test/start.ps1 本地进程启动
 

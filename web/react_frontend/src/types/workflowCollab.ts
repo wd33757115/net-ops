@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Workflow 步骤配置辅助（表达式预设、inputs 合并）
  */

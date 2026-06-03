@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """扫描加载 Workflow 插件包（src/workflows/**/WORKFLOW.yaml）。"""
 
 from __future__ import annotations

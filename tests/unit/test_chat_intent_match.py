@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """聊天 Workflow 意图匹配测试。"""
 
 from src.core.plugins.chat_intent import match_chat_workflow

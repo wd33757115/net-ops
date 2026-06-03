@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """基于金融行业标准模板生成 ITSM 变更工单 Excel（Skill 内实现）。"""
 
 from __future__ import annotations

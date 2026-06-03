@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar, Popconfirm, Spin } from 'antd'
 import {

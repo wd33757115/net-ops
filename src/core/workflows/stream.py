@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Workflow 运行 SSE 流（Timeline 轮询 + 终态检测）。"""
 
 from __future__ import annotations

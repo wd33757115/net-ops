@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Workflow Dry-run：不启动 Celery，解析 when/inputs 并模拟步骤链。"""
 
 from __future__ import annotations

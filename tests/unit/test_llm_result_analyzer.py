@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """LLM 结果分析 Skill 单元测试（不调用真实 LLM）。"""
 
 import sys

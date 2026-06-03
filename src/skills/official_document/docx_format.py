@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """公文 DOCX 段落/页面格式（GB/T 9704-2012 常用值）。"""
 
 from __future__ import annotations

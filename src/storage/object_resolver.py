@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """解析并修复 DB object_key 与 MinIO 实际对象不一致的情况。"""
 
 from __future__ import annotations

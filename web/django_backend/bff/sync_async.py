@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """将 async BFF 视图暴露为 Django 同步视图（Daphne 兼容）。"""
 
 from __future__ import annotations

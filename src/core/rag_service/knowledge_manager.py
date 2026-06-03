@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """知识库文档管理（扫描 knowledge_base/ + Chroma 索引状态）。"""
 
 from __future__ import annotations

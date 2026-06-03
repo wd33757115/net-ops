@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """AuditConsumer：Skill / Workflow 执行审计。"""
 
 from __future__ import annotations

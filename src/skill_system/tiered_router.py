@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Skill 分级路由（L1 触发词 → L2 域/权限 → L3 Catalog 语义 → L4 LLM Judge）。"""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """结构化日志：structlog + stdlib 桥接，支持 JSON / Console 与上下文变量。"""
 
 from __future__ import annotations

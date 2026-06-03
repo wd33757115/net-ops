@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """认证与 RBAC 数据模型（Pydantic）。"""
 
 from __future__ import annotations

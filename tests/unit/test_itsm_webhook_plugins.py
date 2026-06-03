@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """ITSM Webhook 插件映射测试。"""
 
 from src.core.plugins.context_mapping import map_request_to_context

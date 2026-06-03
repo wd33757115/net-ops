@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """P2：统一 API 错误信封与异常处理器测试。"""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Docker 部署指南（已迁移）
 
 > 本文档已合并至正式文档系列，请使用最新版本：

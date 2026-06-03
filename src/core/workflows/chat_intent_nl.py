@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """自然语言 → CHAT.intent 规则草稿（LLM + 规则兜底）。"""
 
 from __future__ import annotations

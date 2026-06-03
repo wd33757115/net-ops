@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Supervisor v2 短链规则调度：ExecutionPlan 启发式（不含 Workflow 长流程定义）。"""
 
 from __future__ import annotations

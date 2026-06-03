@@ -1,4 +1,5 @@
 {
+  "$comment": "Copyright 2026 wangdong <wangdong5919@163.com>. SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://netops-agent.local/schemas/domain-event-v1.json",
   "title": "DomainEvent",

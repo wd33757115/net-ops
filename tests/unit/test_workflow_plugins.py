@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Workflow 表达式与注册表单元测试。"""
 
 from src.core.workflows.expression import build_step_env, resolve_inputs, resolve_value

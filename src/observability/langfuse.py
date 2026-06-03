@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Langfuse 追踪封装（兼容自托管 Langfuse v2 + Python SDK v2）。"""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Redis ExecutionWorkspace：按 thread_id + message_id 缓存 Skill 执行摘要。"""
 
 from __future__ import annotations

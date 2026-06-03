@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # ADR-004: 生产化可观测性与容错体系
 
 **日期**: 2025-05-23

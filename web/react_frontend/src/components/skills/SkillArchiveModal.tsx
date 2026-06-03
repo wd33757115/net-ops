@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 import React, { useEffect } from 'react'
 import { Alert, Form, InputNumber, Modal, Typography, message } from 'antd'
 import { useMutation } from 'react-query'

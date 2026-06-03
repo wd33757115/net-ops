@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 import React, { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { Tag } from 'antd'

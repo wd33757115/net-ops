@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Supervisor v2 图编排单元测试（无 LLM / 无真实设备）。"""
 
 from src.agents.supervisor.heuristic_plan import build_heuristic_execution_plan as _build_heuristic_execution_plan

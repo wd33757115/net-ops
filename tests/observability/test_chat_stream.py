@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """SSE / Langfuse 辅助逻辑测试。"""
 
 from src.auth.models import CurrentUser

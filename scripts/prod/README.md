@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # 生产脚本说明
 
 本目录提供 **上线前预检、一键启动、冒烟、备份** 工具，与 [docs/13_生产上线清单.md](../../docs/13_生产上线清单.md) 配套使用。

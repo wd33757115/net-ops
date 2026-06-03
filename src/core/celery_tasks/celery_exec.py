@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Celery 任务提交与结果等待（快速失败，避免聊天线程长时间阻塞）。"""
 
 from __future__ import annotations

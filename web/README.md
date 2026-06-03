@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # NetOps Agent - Django + React 架构
 
 这是 NetOps Agent 的新前端架构，使用 Django + React 替代了原先的 Streamlit 前端。

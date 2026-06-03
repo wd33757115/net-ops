@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """经 BFF 代理的对象下载链接（替代 MinIO localhost 预签名 URL）。"""
 
 from __future__ import annotations

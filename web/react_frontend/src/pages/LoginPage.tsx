@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 import React, { useState } from 'react'
 import { Button, Card, Form, Input, Typography, message } from 'antd'
 import { LockOutlined, UserOutlined } from '@ant-design/icons'

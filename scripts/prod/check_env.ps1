@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # 生产环境变量预检：默认密钥 / 必填项
 param(
     [string]$EnvFile = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path ".env")

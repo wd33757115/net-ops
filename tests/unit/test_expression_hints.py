@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """表达式提示 API 单元测试。"""
 
 from src.core.workflows.dsl import WorkflowDSL, WorkflowMetaDSL, WorkflowStepDSL

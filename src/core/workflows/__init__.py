@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Workflow 编排引擎（ITSM 等多步长时任务）。"""
 
 from src.core.workflows.engine import WorkflowEngine

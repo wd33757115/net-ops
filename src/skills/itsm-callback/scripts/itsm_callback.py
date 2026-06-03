@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """ITSM 回调 Skill 主程序（无平台依赖的业务 HTTP 回调）。"""
 from __future__ import annotations
 

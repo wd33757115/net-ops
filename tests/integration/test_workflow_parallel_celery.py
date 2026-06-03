@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Workflow 并行 Celery 集成测试（eager 模式 + PostgreSQL）。"""
 
 from __future__ import annotations

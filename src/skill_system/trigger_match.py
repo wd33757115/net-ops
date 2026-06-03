@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Skill 触发词匹配（支持「写一份请示」匹配「写请示」等口语变体）。"""
 
 from __future__ import annotations

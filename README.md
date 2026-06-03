@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # NetOps Agent — AI 驱动的网络运维平台
 
@@ -343,4 +345,6 @@ copy .env.example .env
 
 ## License
 
-MIT
+Copyright 2026 [wangdong](mailto:wangdong5919@163.com)
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full text.

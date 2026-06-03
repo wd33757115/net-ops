@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # GB/T 9704-2012 党政机关公文格式标准
 
 ## 目录

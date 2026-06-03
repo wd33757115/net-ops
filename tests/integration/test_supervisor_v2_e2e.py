@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Supervisor v2 端到端集成测试（Mock LLM，不依赖真实设备）。"""
 
 from __future__ import annotations

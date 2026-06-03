@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 import { Grid } from 'antd'
 
 /** 与 index.css @media (max-width: 768px) 及 Ant Design md 断点对齐 */

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Workflow 通知策略配置测试。"""
 
 from src.core.workflows.registry import WorkflowCompletionConfig, _parse_workflow_file

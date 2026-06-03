@@ -2,6 +2,8 @@
   "name": "netops-agent-frontend",
   "private": true,
   "version": "0.0.0",
+  "license": "Apache-2.0",
+  "author": "wangdong <wangdong5919@163.com>",
   "type": "module",
   "scripts": {
     "dev": "vite",

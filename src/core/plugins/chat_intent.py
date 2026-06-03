@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """聊天意图 → Workflow 插件（扫描 **/CHAT.intent.yaml）。"""
 
 from __future__ import annotations

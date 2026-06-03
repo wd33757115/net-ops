@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """从本地 manifest.json 或策略 ZIP 解析结构化数据（Skill 内聚，不依赖 MinIO/平台）。"""
 
 from __future__ import annotations

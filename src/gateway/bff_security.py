@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """FastAPI 侧 BFF 内部请求校验。"""
 
 from __future__ import annotations

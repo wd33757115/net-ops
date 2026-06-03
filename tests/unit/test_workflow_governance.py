@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Workflow 治理：导出 / 导入 / diff 单元测试（不依赖 PostgreSQL）。"""
 
 import shutil

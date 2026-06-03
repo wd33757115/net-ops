@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """公文写作 Skill 结构化 JSON Schema（供 LLM 与渲染脚本共用）。"""
 
 from __future__ import annotations

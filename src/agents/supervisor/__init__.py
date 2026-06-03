@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Supervisor Agent 图构建入口（v2 为唯一运行时入口）。"""
 
 from src.agents.supervisor.graph_v2 import (

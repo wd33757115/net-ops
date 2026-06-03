@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # ITSM Workflow 插件开发指南
 
 新增一类 ITSM 工单时，**无需修改** `engine.py`、`main.py` 业务逻辑或 Celery 任务实现。只需在 `src/workflows/itsm/<插件名>/` 下添加插件包，并实现对应 Skill 脚本。

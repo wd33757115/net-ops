@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Skill 执行结果标准契约 v1（生产级统一 envelope）。"""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """从防火墙策略输出目录构建 manifest.json。"""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # NetOps 部署脚本
 
 本目录提供**测试环境**与**生产环境**的安装、启动、关闭脚本。

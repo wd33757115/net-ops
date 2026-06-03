@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Langfuse + SSE 流式 Trace 落地方案
 
 > 与 [auth-rbac-plan.md](./auth-rbac-plan.md) 配套：认证完成后，通过 SSE 实时展示 Supervisor v2 执行步骤，并写入 Langfuse。

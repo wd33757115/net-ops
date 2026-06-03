@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Skill 执行模块。"""
 
 from src.core.skills.executor import SkillExecutionError, _execute_skill_impl, execute_skill

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Skill 灰度治理单元测试。"""
 
 from src.skill_system.governance.rollout import (

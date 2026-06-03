@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+// SPDX-License-Identifier: Apache-2.0
+
 import React from 'react'
 
 /** 正文 / payload 中出现的 HTTP(S) URL */

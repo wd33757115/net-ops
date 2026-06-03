@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """FastAPI 全局异常处理器：统一错误信封 + request_id。"""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 #!/usr/bin/env bash
 # 生产环境 - 一键启动（Compose + 迁移 + 种子用户 + 冒烟）
 set -euo pipefail

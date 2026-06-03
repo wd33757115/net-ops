@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """结构化日志初始化测试。"""
 
 from src.core.logging import bind_context, configure_logging, get_logger, reset_context

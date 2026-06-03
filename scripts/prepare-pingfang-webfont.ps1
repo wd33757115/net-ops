@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # 从 macOS 系统字体生成 PingFang SC webfont（需在本机已安装苹方）
 #
 # 用法（在 Mac 上）:

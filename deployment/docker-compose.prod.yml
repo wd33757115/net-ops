@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # 生产覆盖层：与 docker-compose.yml 叠加使用
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #

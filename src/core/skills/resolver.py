@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Skill 入口脚本解析（基于 SKILL.md，平台不含业务逻辑）。"""
 
 from __future__ import annotations

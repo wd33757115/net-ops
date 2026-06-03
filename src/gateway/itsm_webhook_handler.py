@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """通用 ITSM Webhook 处理（读取 Workflow 插件包，无硬编码工单类型）。"""
 
 from __future__ import annotations

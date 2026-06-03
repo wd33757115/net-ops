@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """网盘路径解析与安全规范化（object_key / 目录链）。"""
 
 from __future__ import annotations

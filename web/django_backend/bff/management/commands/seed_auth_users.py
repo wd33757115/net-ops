@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """创建演示用户与 RBAC 分组。"""
 
 from django.contrib.auth.models import Group, User

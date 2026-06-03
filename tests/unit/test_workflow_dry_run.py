@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Workflow Dry-run 与 NL Chat Intent 单元测试。"""
 
 from src.core.workflows.chat_intent_nl import suggest_chat_intent_from_nl

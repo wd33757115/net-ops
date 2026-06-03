@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
 #version1.0-添加工单连续地址合并功能，华为和华三F50X0版本生成模板已验证
 import logging
 import os
