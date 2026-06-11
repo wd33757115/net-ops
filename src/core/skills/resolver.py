@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import yaml
@@ -34,7 +35,9 @@ def _load_frontmatter(skill_name: str) -> dict:
     skill_md = get_skill_dir(skill_name) / "SKILL.md"
     if not skill_md.is_file():
         return {}
-    text = skill_md.read_text(encoding="utf-8")
+    text = skill_md.read_text(encoding="utf-8").replace("\r\n", "\n")
+    # 跳过 frontmatter 之前的前导空白与 HTML 注释（如 SPDX license 头）
+    text = re.sub(r"^\s*(?:<!--.*?-->\s*)*", "", text, flags=re.DOTALL)
     if not text.startswith("---"):
         return {}
     parts = text.split("---", 2)

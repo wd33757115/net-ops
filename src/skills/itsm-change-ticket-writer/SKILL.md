@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: itsm-change-ticket-writer
 version: 1.2.0
@@ -108,3 +105,6 @@ python src/skills/itsm-change-ticket-writer/scripts/itsm_change_ticket_excel.py 
 | 变更执行脚本 | 动态行 |
 | 变更验证环节 | 动态行 |
 | 回退方案 | 动态行 |
+
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->

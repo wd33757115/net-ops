@@ -1,0 +1,45 @@
+# TextFSM 命令类别与必填字段（LLM 不得自由扩展字段名）
+cpu:
+  fields:
+    - slot
+    - cpu_5s
+    - cpu_1m
+    - cpu_5m
+  validators:
+    cpu_5s:
+      type: percent
+    cpu_1m:
+      type: percent
+    cpu_5m:
+      type: percent
+
+memory:
+  fields:
+    - slot
+    - total
+    - used
+    - usage
+  validators:
+    usage:
+      type: percent
+
+interface:
+  fields:
+    - interface
+    - phy_status
+    - protocol_status
+
+fan:
+  fields:
+    - slot
+    - fan
+    - state
+  validators:
+    state:
+      type: enum
+      values:
+        - Normal
+        - Warning
+        - Abnormal
+        - Absent
+        - "Not Present"

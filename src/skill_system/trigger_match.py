@@ -18,6 +18,11 @@ _WRITE_GAP = (
 )
 
 
+def _compact(text: str) -> str:
+    """去掉空白并小写，用于忽略「生成 TextFSM」vs「生成TEXTFSM」差异。"""
+    return re.sub(r"\s+", "", (text or "").lower())
+
+
 def trigger_matches(trigger: str, query: str) -> bool:
     """
     判断触发词是否命中用户话術。
@@ -32,6 +37,10 @@ def trigger_matches(trigger: str, query: str) -> bool:
 
     tl, ql = trigger.lower(), query.lower()
     if tl in ql:
+        return True
+
+    ct, cq = _compact(trigger), _compact(query)
+    if ct and ct in cq:
         return True
 
     if trigger.startswith("写") and len(trigger) > 1:

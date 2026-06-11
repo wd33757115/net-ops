@@ -145,6 +145,9 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     """
     text = normalize_markdown_content(content)
 
+    # 跳过 frontmatter 之前的前导空白与 HTML 注释（如 SPDX license 头）
+    text = re.sub(r"^\s*(?:<!--.*?-->\s*)*", "", text, flags=re.DOTALL)
+
     # 标准：首尾 --- 块
     pattern = r"^---\s*\n(.*?)\n---\s*\n(.*)$"
     match = re.match(pattern, text, re.DOTALL)

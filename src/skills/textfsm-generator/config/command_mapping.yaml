@@ -1,0 +1,35 @@
+# vendor + model → command → category
+# 键格式: "<Vendor> <Model>"
+Huawei CE12800:
+  display cpu-usage:
+    category: cpu
+  display memory:
+    category: memory
+  display interface brief:
+    category: interface
+  display fan:
+    category: fan
+
+Huawei Generic:
+  display fan:
+    category: fan
+  display device fan:
+    category: fan
+
+Huawei S5700:
+  display fan:
+    category: fan
+
+H3C S5590:
+  display cpu:
+    category: cpu
+  display fan:
+    category: fan
+
+Cisco 9300:
+  show processes cpu:
+    category: cpu
+  show memory statistics:
+    category: memory
+  show ip interface brief:
+    category: interface

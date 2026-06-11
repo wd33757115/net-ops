@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: device-patrol
 version: 1.0.0
@@ -169,3 +166,6 @@ fallback_to_rag: true
 - 建议在业务低峰期执行大规模巡检，避免影响设备性能
 - 基线数据保存期限为 90 天，可用于趋势分析
 - 超时或失败时自动触发 RAG 知识库兜底
+
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->

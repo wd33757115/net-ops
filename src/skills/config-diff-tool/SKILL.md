@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: config-diff-tool
 version: 1.0.0
@@ -136,3 +133,6 @@ fallback_to_rag: true
 - 大型配置文件（超过 5000 行）建议分段对比
 - 变更涉及生产环境时建议先在维护窗口内操作
 - 超时或失败时自动触发 RAG 知识库兜底
+
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->

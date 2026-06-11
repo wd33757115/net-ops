@@ -134,7 +134,12 @@ def add_header(path: Path) -> bool:
         return False
 
     if suffix == ".md":
-        new_content = _md_header() + raw.lstrip("\ufeff")
+        stripped = raw.lstrip("\ufeff")
+        # 带 YAML frontmatter 的 md（如 SKILL.md）：header 放末尾，避免破坏 --- 解析
+        if stripped.lstrip().startswith("---"):
+            new_content = stripped.rstrip() + "\n\n" + _md_header().rstrip() + "\n"
+        else:
+            new_content = _md_header() + stripped
     elif suffix in COMMENT_STYLES:
         prefix, sfx = COMMENT_STYLES[suffix]
         header = _comment_header(prefix, sfx)

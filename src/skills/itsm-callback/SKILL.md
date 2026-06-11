@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: itsm-callback
 version: 1.0.0
@@ -50,3 +47,6 @@ fallback_to_rag: false
 ## 执行方式
 
 平台通过 `execute_skill_task` 调用 `scripts/itsm_callback.py`（`entry_output: none`，stdout 返回 JSON）。
+
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->

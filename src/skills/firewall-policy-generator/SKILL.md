@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: firewall-policy-generator
 version: 1.0.0
@@ -185,3 +182,6 @@ fallback_to_rag: true
 - 生成配置前建议 review 策略规则列表，避免误开放端口
 - 多厂商配置文件在下载压缩包中按目录分类
 - 超时或失败时自动触发 RAG 知识库兜底
+
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->

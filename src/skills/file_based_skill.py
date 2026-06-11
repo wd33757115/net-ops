@@ -108,6 +108,11 @@ class FileBasedSkill(BaseSkill):
             if task_name:
                 return await self._execute_with_celery(task_name, kwargs)
 
+            from src.core.skills.resolver import resolve_entry_script
+
+            if resolve_entry_script(self.name):
+                return await self._execute_entry_script(kwargs)
+
             from src.skill_system import get_skill_system
 
             instructions = get_skill_system().get_skill_instructions(self.name)
@@ -147,6 +152,40 @@ class FileBasedSkill(BaseSkill):
                 success=bool(result.get("success", True)),
                 message=result.get("message", ""),
                 data=result.get("data") or {},
+                download_url=result.get("download_url"),
+                error=result.get("error"),
+                execution_time_ms=int(result.get("execution_time_ms") or 0),
+            )
+        return SkillResult(success=True, message=str(result), data={"raw_result": result})
+
+    async def _execute_entry_script(self, params: dict) -> SkillResult:
+        """通过 entry_script subprocess 同步执行 Skill（不经 Celery / LLM 兜底）。"""
+        import asyncio
+
+        from src.core.skills.executor import SkillExecutionError, _execute_skill_impl
+
+        params = dict(params)
+        try:
+            result = await asyncio.to_thread(_execute_skill_impl, self.name, params)
+        except SkillExecutionError as exc:
+            return SkillResult(
+                success=False,
+                message=str(exc),
+                error=str(exc),
+            )
+        except Exception as exc:
+            logger.exception("entry_script 执行失败 skill=%s", self.name)
+            return SkillResult(
+                success=False,
+                message=f"Skill 脚本执行失败: {exc}",
+                error=str(exc),
+            )
+
+        if isinstance(result, dict):
+            return SkillResult(
+                success=bool(result.get("success", True)),
+                message=result.get("message", ""),
+                data=result,
                 download_url=result.get("download_url"),
                 error=result.get("error"),
                 execution_time_ms=int(result.get("execution_time_ms") or 0),

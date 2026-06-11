@@ -164,6 +164,9 @@ def _is_knowledge_question(query: str) -> bool:
         r"给我一份",
         r"写一份",
         r"撰写",
+        r"textfsm",
+        r"解析模板",
+        r"生成.{0,8}模板",
     ]
     if any(re.search(p, q, re.IGNORECASE) for p in operational_patterns):
         return False

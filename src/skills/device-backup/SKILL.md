@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: device-backup
 version: 1.0.0
@@ -155,3 +152,6 @@ fallback_to_rag: true
 - 大批量备份建议按分组分批次执行，避免网络拥塞
 - 备份文件保存期限为 30 天，过期自动清理
 - 超时或失败时自动触发 RAG 知识库兜底
+
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->

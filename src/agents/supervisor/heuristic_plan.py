@@ -79,11 +79,20 @@ def _params_device_ops(
     return {"filter_params": extract_device_filter_params(query)}
 
 
+def _params_textfsm_generator(
+    query: str,
+    uploaded_file_path: str | None,
+    ticket_id: str | None,
+) -> dict[str, Any]:
+    return {"user_query": query}
+
+
 _SKILL_PARAM_BUILDERS: dict[str, Callable[..., dict[str, Any]]] = {
     "firewall-policy-generator": _params_firewall_policy,
     "official-document-writing": _params_official_document,
     "device-backup": _params_device_ops,
     "device-patrol": _params_device_ops,
+    "textfsm-generator": _params_textfsm_generator,
 }
 
 

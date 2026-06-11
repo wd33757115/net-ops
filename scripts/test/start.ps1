@@ -74,7 +74,7 @@ New-Item -ItemType Directory -Force -Path $runtimeDir, $logDir | Out-Null
 
 Write-ColorOutput "============================================================" "Cyan"
 Write-ColorOutput "  NetOps Test Environment - Start" "Cyan"
-Write-ColorOutput "  (Middleware Docker + Local App Processes)" "Cyan"
+Write-ColorOutput '  (Middleware Docker + Local App Processes)' "Cyan"
 Write-ColorOutput "============================================================" "Cyan"
 Write-ColorOutput "  Project: $ProjectRoot" "Gray"
 Write-ColorOutput "  FastAPI: $FastAPIPort | Django: $DjangoPort | React: $ReactPort" "Gray"
@@ -120,16 +120,16 @@ Write-ColorOutput "[Step 1/7] Check Docker..." "Yellow"
 $needDocker = (-not $SkipMiddleware) -or (-not $SkipLangfuse)
 $dockerOk = $false
 if ($SkipMiddleware -and $SkipLangfuse) {
-    Write-ColorOutput "  [SKIP] SkipMiddleware + SkipLangfuse (no Docker stacks)" "Gray"
+    Write-ColorOutput '  [SKIP] SkipMiddleware + SkipLangfuse (no Docker stacks)' "Gray"
 } elseif (Test-DockerAvailable) {
     Write-ColorOutput "  [OK] Docker is available" "Green"
     $dockerOk = $true
 } elseif ($AllowNoDocker) {
-    Write-ColorOutput "  [WARN] Docker not available; continuing (AllowNoDocker)" "Yellow"
+    Write-ColorOutput '  [WARN] Docker not available; continuing (AllowNoDocker)' "Yellow"
 } else {
     Write-ColorOutput "  [ERROR] Docker Desktop is not running." "Red"
     Write-ColorOutput "  Start Docker Desktop, wait until Ready, then run start.ps1 again." "Yellow"
-    Write-ColorOutput "  Or use -SkipMiddleware -SkipLangfuse -AllowNoDocker for UI-only (backend will fail)." "Gray"
+    Write-ColorOutput '  Or use -SkipMiddleware -SkipLangfuse -AllowNoDocker for UI-only (backend will fail).' "Gray"
     exit 1
 }
 
@@ -138,7 +138,7 @@ $middlewareCompose = Join-Path $ProjectRoot "deployment\docker-compose.middlewar
 $langfuseCompose = Join-Path $ProjectRoot "docker\langfuse\docker-compose.yml"
 if ($dockerOk) {
     if ($SkipMiddleware) {
-        Write-ColorOutput "  [SKIP] Middleware (SkipMiddleware)" "Gray"
+        Write-ColorOutput '  [SKIP] Middleware (SkipMiddleware)' "Gray"
     } else {
         if (-not (Ensure-DockerReady -ComposeFile $middlewareCompose)) {
             Write-ColorOutput "  [ERROR] middleware docker compose up failed" "Red"
@@ -167,7 +167,7 @@ if ($dockerOk) {
     }
 
     if ($SkipLangfuse) {
-        Write-ColorOutput "  [SKIP] Langfuse (SkipLangfuse)" "Gray"
+        Write-ColorOutput '  [SKIP] Langfuse (SkipLangfuse)' "Gray"
     } else {
         if (-not (Invoke-DockerComposeUp -ComposeFile $langfuseCompose -Label "Langfuse")) {
             Write-ColorOutput "  [ERROR] Langfuse docker compose up failed" "Red"
@@ -190,7 +190,7 @@ if ($dockerOk) {
         }
     }
 } else {
-    Write-ColorOutput "  [SKIP] Docker not available (middleware + Langfuse)" "Gray"
+    Write-ColorOutput '  [SKIP] Docker not available (middleware + Langfuse)' "Gray"
 }
 
 Write-ColorOutput "[Step 3/7] Django migrate..." "Yellow"
@@ -199,7 +199,7 @@ $env:DJANGO_SETTINGS_MODULE = "django_backend.settings"
 $migrateLog = Join-Path $logDir "django-migrate.log"
 & $venvPython manage.py migrate --noinput *>&1 | Out-File $migrateLog -Encoding utf8
 Pop-Location
-Write-ColorOutput "  [OK] migrate done (log: django-migrate.log)" "Green"
+Write-ColorOutput '  [OK] migrate done (log: django-migrate.log)' "Green"
 
 $useV2 = if ($UseSupervisorV1) { "false" } else { "true" }
 $pids = @{}
@@ -226,7 +226,7 @@ foreach ($k in @("LANGFUSE_HOST", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"))
 if ($dotEnv.ContainsKey("JWT_ALGORITHM")) { $fastapiEnv["JWT_ALGORITHM"] = $dotEnv["JWT_ALGORITHM"] }
 if ($dotEnv.ContainsKey("BFF_REQUIRE_AUTH")) { $fastapiEnv["BFF_REQUIRE_AUTH"] = $dotEnv["BFF_REQUIRE_AUTH"] }
 
-Write-ColorOutput "[Step 4/7] Start Celery Worker (solo, Windows) ..." "Yellow"
+Write-ColorOutput '[Step 4/7] Start Celery Worker (solo, Windows) ...' "Yellow"
 $celeryLog = Join-Path $logDir "celery.log"
 $celeryLauncher = Join-Path $logDir "celery-launcher.ps1"
 $celeryEnv = @{
@@ -248,14 +248,14 @@ if ($jwtSecret) { $celeryEnv["JWT_SECRET_KEY"] = $jwtSecret }
 foreach ($k in @("LANGFUSE_HOST", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")) {
     if ($dotEnv.ContainsKey($k)) { $celeryEnv[$k] = $dotEnv[$k] }
 }
-$celeryCmd = '& ''' + $py + ''' -m celery -A src.core.celery_tasks.celery_app worker --loglevel=info -P solo -Q netops.default,netops.firewall,netops.device'
+$celeryCmd = "& '$py' -m celery -A src.core.celery_tasks.celery_app worker --loglevel=info -P solo -Q netops.default,netops.firewall,netops.device"
 New-LauncherScript -Path $celeryLauncher -WorkingDirectory $ProjectRoot -EnvVars $celeryEnv -CommandLine $celeryCmd -LogFile $celeryLog -PreCommands @(
     'Remove-Item Env:DJANGO_SETTINGS_MODULE -ErrorAction SilentlyContinue'
 )
-$pids["celery"] = (Start-LauncherProcess -LauncherPath $celeryLauncher).Id
-Write-ColorOutput "  [OK] Celery PID=$($pids['celery']) (log: celery.log)" "Green"
-Write-ColorOutput "  [TIP] Celery 已在后台运行，勿再手动开第二个 Worker（会 pidbox 冲突）" "Gray"
-Write-ColorOutput "        调试 Celery 请用: scripts\test\celery_worker.ps1" "Gray"
+$pids.celery = (Start-LauncherProcess -LauncherPath $celeryLauncher).Id
+Write-ColorOutput ("  [OK] Celery PID={0} (log: celery.log)" -f $pids.celery) "Green"
+Write-ColorOutput "  [TIP] Celery worker running; do not start a second worker (pidbox conflict)" "Gray"
+Write-ColorOutput "        Debug: scripts\test\celery_worker.ps1" "Gray"
 if ($dockerOk -and -not $SkipMiddleware) {
     Start-Sleep -Seconds 8
 }
@@ -263,16 +263,23 @@ if ($dockerOk -and -not $SkipMiddleware) {
 Write-ColorOutput "[Step 5/7] Start FastAPI :$FastAPIPort ..." "Yellow"
 $fastapiLog = Join-Path $logDir "fastapi.log"
 $fastapiLauncher = Join-Path $logDir "fastapi-launcher.ps1"
-$fastapiCmd = '& ''' + $py + ''' -m uvicorn src.gateway.main:app --host 0.0.0.0 --port ' + $FastAPIPort + ' --reload'
+if ($DevMode) {
+    # 开发模式才热重载；保存代码时会短暂停服，BFF 易出现 502
+    $fastapiCmd = "& '$py' -m uvicorn src.gateway.main:app --host 0.0.0.0 --port $FastAPIPort --reload --reload-exclude '.runtime' --reload-exclude 'templates' --reload-exclude 'web/react_frontend'"
+    Write-ColorOutput '  Mode: uvicorn --reload (DevMode; saves may cause brief 502)' "Gray"
+} else {
+    $fastapiCmd = "& '$py' -m uvicorn src.gateway.main:app --host 0.0.0.0 --port $FastAPIPort"
+    Write-ColorOutput '  Mode: uvicorn stable (no auto-reload; recommended for daily use)' "Gray"
+}
 New-LauncherScript -Path $fastapiLauncher -WorkingDirectory $ProjectRoot -EnvVars $fastapiEnv -CommandLine $fastapiCmd -LogFile $fastapiLog
-$pids["fastapi"] = (Start-LauncherProcess -LauncherPath $fastapiLauncher).Id
-Write-ColorOutput "  [OK] FastAPI PID=$($pids['fastapi']) USE_SUPERVISOR_V2=$useV2" "Green"
+$pids.fastapi = (Start-LauncherProcess -LauncherPath $fastapiLauncher).Id
+Write-ColorOutput "  [OK] FastAPI PID=$($pids.fastapi) USE_SUPERVISOR_V2=$useV2" "Green"
 
 Write-ColorOutput "[Step 6/7] Start Django BFF :$DjangoPort ..." "Yellow"
 $djangoLog = Join-Path $logDir "django.log"
 $djangoDir = Join-Path $ProjectRoot "web\django_backend"
 $djangoLauncher = Join-Path $logDir "django-launcher.ps1"
-$djangoCmd = '& ''' + $py + ''' -m daphne -b 0.0.0.0 -p ' + $DjangoPort + ' django_backend.asgi:application'
+$djangoCmd = "& '$py' -m daphne -b 0.0.0.0 -p $DjangoPort django_backend.asgi:application"
 $djangoEnv = @{
     DJANGO_DEBUG = "true"
     FASTAPI_BASE_URL = "http://localhost:$FastAPIPort"
@@ -283,8 +290,8 @@ elseif ($jwtSecret) { $djangoEnv["JWT_SECRET_KEY"] = $jwtSecret }
 if ($dotEnv.ContainsKey("JWT_ALGORITHM")) { $djangoEnv["JWT_ALGORITHM"] = $dotEnv["JWT_ALGORITHM"] }
 if (-not $djangoEnv.ContainsKey("SECRET_KEY") -and $jwtSecret) { $djangoEnv["SECRET_KEY"] = $jwtSecret }
 New-LauncherScript -Path $djangoLauncher -WorkingDirectory $djangoDir -EnvVars $djangoEnv -CommandLine $djangoCmd -LogFile $djangoLog
-$pids["django"] = (Start-LauncherProcess -LauncherPath $djangoLauncher).Id
-Write-ColorOutput "  [OK] Django PID=$($pids['django'])" "Green"
+$pids.django = (Start-LauncherProcess -LauncherPath $djangoLauncher).Id
+Write-ColorOutput "  [OK] Django PID=$($pids.django)" "Green"
 
 Write-ColorOutput "[Step 7/7] Start React :$ReactPort ..." "Yellow"
 Kill-ProcessOnPort -Port $ReactPort | Out-Null
@@ -296,12 +303,12 @@ if ($DevMode) {
     $viteCache = Join-Path $reactDir "node_modules\.vite"
     if (Test-Path $viteCache) {
         Remove-Item $viteCache -Recurse -Force -ErrorAction SilentlyContinue
-        Write-ColorOutput "  Cleared Vite dep cache (dev mode)" "Gray"
+        Write-ColorOutput '  Cleared Vite dep cache (dev mode)' "Gray"
     }
     $reactCmd = "npm run dev -- --host 0.0.0.0 --port $ReactPort --strictPort"
-    Write-ColorOutput "  Mode: Vite dev (pass -DevMode explicitly)" "Gray"
+    Write-ColorOutput '  Mode: Vite dev (pass -DevMode explicitly)' "Gray"
 } else {
-    Write-ColorOutput "  Building React (preview mode, may take 1-3 min)..." "Gray"
+    Write-ColorOutput '  Building React (preview mode, may take 1-3 min)...' "Gray"
     Push-Location $reactDir
     $env:VITE_DJANGO_BACKEND_URL = "http://localhost:$DjangoPort"
     npm run build 2>&1 | ForEach-Object { Write-Host "    $_" }
@@ -312,17 +319,17 @@ if ($DevMode) {
     }
     Pop-Location
     $reactCmd = "npm run preview -- --host 0.0.0.0 --port $ReactPort --strictPort"
-    Write-ColorOutput "  Mode: Vite preview (production build, stable UI)" "Gray"
+    Write-ColorOutput '  Mode: Vite preview (production build, stable UI)' "Gray"
 }
 New-LauncherScript -Path $reactLauncher -WorkingDirectory $reactDir -EnvVars @{
     VITE_DJANGO_BACKEND_URL = "http://localhost:$DjangoPort"
 } -CommandLine $reactCmd -LogFile $reactLog
-$pids["react"] = (Start-LauncherProcess -LauncherPath $reactLauncher).Id
-Write-ColorOutput "  [OK] React PID=$($pids['react'])" "Green"
+$pids.react = (Start-LauncherProcess -LauncherPath $reactLauncher).Id
+Write-ColorOutput "  [OK] React PID=$($pids.react)" "Green"
 
 $pids | ConvertTo-Json | Set-Content -Path $pidFile -Encoding UTF8
 
-Write-ColorOutput "Waiting for services (parallel, up to 300s)..." "Yellow"
+Write-ColorOutput 'Waiting for services (parallel, up to 300s)...' "Yellow"
 $ready = Wait-ServicesReady -ReactPort $ReactPort -DjangoPort $DjangoPort -FastAPIPort $FastAPIPort -TimeoutSec 300
 $reactOk = $ready.React
 $bffOk = $ready.Bff
@@ -347,16 +354,16 @@ Write-ColorOutput "" "Cyan"
 Write-ColorOutput "============================================================" "Cyan"
 Write-ColorOutput "  Test Environment Ready" "Green"
 Write-ColorOutput "============================================================" "Cyan"
-Write-ColorOutput "  React:   http://localhost:$ReactPort/chat  $(if ($reactOk) {'[OK]'} else {'[WAIT]'})" "Gray"
-Write-ColorOutput "  Django:  http://localhost:$DjangoPort/api/health/  $(if ($bffOk) {'[OK]'} else {'[WAIT]'})" "Gray"
-Write-ColorOutput "  FastAPI: http://localhost:$FastAPIPort/health  $(if ($apiOk) {'[OK]'} else {'[WAIT]'})" "Gray"
-Write-ColorOutput "  Celery:  see $logDir\celery.log (required for firewall/backup/patrol Skills)" "Gray"
+Write-ColorOutput "  React:   http://localhost:$ReactPort/chat  $(if ($reactOk) { '[OK]' } else { '[WAIT]' })" "Gray"
+Write-ColorOutput "  Django:  http://localhost:$DjangoPort/api/health/  $(if ($bffOk) { '[OK]' } else { '[WAIT]' })" "Gray"
+Write-ColorOutput "  FastAPI: http://localhost:$FastAPIPort/health  $(if ($apiOk) { '[OK]' } else { '[WAIT]' })" "Gray"
+Write-ColorOutput ("  Celery:  see {0}\celery.log - required for firewall/backup/patrol Skills" -f $logDir) "Gray"
 if ($dockerOk -and -not $SkipLangfuse) {
-    Write-ColorOutput "  Langfuse: http://localhost:3001  (admin@netops.local / netops-langfuse-admin)" "Gray"
+    Write-ColorOutput '  Langfuse: http://localhost:3001  (admin@netops.local / netops-langfuse-admin)' "Gray"
 }
 Write-ColorOutput "  Logs:    $logDir" "Gray"
 Write-ColorOutput "" "Cyan"
-Write-ColorOutput "Tip: scripts\test\stop.ps1 to stop (add -KeepMiddleware / -KeepLangfuse to keep Docker stacks)" "Yellow"
+Write-ColorOutput 'Tip: scripts\test\stop.ps1 to stop (add -KeepMiddleware / -KeepLangfuse to keep Docker stacks)' "Yellow"
 Start-Process "http://localhost:$ReactPort/chat"
 
 if (-not $bffOk -or -not $apiOk) {

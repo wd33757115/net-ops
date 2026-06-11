@@ -24,6 +24,25 @@ from src.infrastructure.storage.minio_client import get_minio_storage
 
 logger = logging.getLogger(__name__)
 
+
+def _skill_subprocess_env() -> dict[str, str]:
+    """Windows 下强制子进程 stdout/stderr 使用 UTF-8，避免中文乱码。"""
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
+def _decode_subprocess_bytes(data: bytes) -> str:
+    """先严格 UTF-8；失败则回退 GBK（Windows 控制台默认编码）。"""
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("gbk", errors="replace")
+
+
 # 仍走 in-process 的遗留 Skill（设备类等）
 _LEGACY_TASK_NAMES: dict[str, str] = {
     "device-backup": "execute_config_backup_task",
@@ -145,15 +164,17 @@ def _run_subprocess_skill(skill_name: str, params: dict[str, Any]) -> dict[str, 
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
             timeout=600,
             cwd=str(get_skill_cwd(skill_name)),
+            env=_skill_subprocess_env(),
         )
+        stdout_text = _decode_subprocess_bytes(result.stdout or b"")
+        stderr_text = _decode_subprocess_bytes(result.stderr or b"")
         if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "").strip()
+            detail = (stderr_text or stdout_text or "").strip()
             raise SkillExecutionError(f"Skill 脚本失败 ({skill_name}): {detail}")
 
-        skill_result = _parse_skill_stdout(result.stdout)
+        skill_result = _parse_skill_stdout(stdout_text)
         if not skill_result.get("success", True) and skill_result.get("error"):
             return skill_result
 

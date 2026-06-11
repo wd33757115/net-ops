@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: official-document-writing
 version: 1.1.0
@@ -164,3 +161,6 @@ fallback_to_rag: false
 - 同步执行，典型耗时 0.5～3 秒（视 LLM 与 MinIO）
 - MinIO 不可用时返回 JSON 与文本预览，并提示下载失败原因
 - 复杂合并附件场景可后续扩展 `execution_mode: async`，默认不使用
+
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->

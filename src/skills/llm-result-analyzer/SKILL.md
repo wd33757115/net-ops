@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 ---
 name: llm-result-analyzer
 version: 1.0.0
@@ -97,3 +94,6 @@ stdout 末行 JSON：`{"success": true, "analysis": "...", ...}`
 1. `prev_result` / `upstream_result`
 2. `{upstream-skill}_output`（Supervisor depends_on 注入）
 3. `manifest` 或含 devices/scripts 的扁平 dict
+
+<!-- SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com> -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
