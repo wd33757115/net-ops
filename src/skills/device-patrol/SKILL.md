@@ -48,6 +48,15 @@ outputs:
   - name: patrol_summary
     type: text
     description: 巡检摘要
+  - name: snapshot_run_id
+    type: string
+    description: 本次巡检 Snapshot Run ID，供 Workflow 下游 change-detector 使用
+  - name: snapshot_db
+    type: string
+    description: Snapshot Store 路径
+  - name: snapshot_commands
+    type: integer
+    description: 本次写入的命令快照数量
 references:
   - type: rag
     source: device-patrol-guide

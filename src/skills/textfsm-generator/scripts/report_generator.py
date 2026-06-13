@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""生成单条模板验证报告并写入 reports/ 目录。"""
+"""Write per-template and batch TextFSM generation reports."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,37 +31,63 @@ class GenerationReport:
     errors: list[str] | None = None
     parsed_records: list[dict[str, Any]] | None = None
     mode: str = "database"
+    family: str | None = None
+    entity_type: str | None = None
+    primary_keys: list[str] | None = None
+    sample_count: int = 1
+    passed_samples: int = 0
+    validation_pass_rate: float = 0.0
+    sample_results: list[dict[str, Any]] | None = None
+    confidence: float | None = None
+    evidence_command: str | None = None
+    evidence_text: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        if not data.get("errors"):
-            data.pop("errors", None)
-        if not data.get("skipped_reason"):
-            data.pop("skipped_reason", None)
-        if not data.get("parsed_records"):
-            data.pop("parsed_records", None)
-        return data
+        return {
+            key: value
+            for key, value in asdict(self).items()
+            if value is not None and value != []
+        }
+
+
+def _safe_name(value: str) -> str:
+    return "".join(char if char.isalnum() or char in "._-" else "_" for char in value)
 
 
 def save_report(report: GenerationReport, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
-    safe_cmd = report.command.replace(" ", "_").replace("/", "_")[:40]
-    filename = f"{report.vendor}_{report.model}_{safe_cmd}_{ts}.json"
-    path = reports_dir / filename
-    path.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    timestamp = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S_%f")
+    filename = "_".join(
+        [
+            _safe_name(report.vendor),
+            _safe_name(report.model),
+            _safe_name(report.command)[:50],
+            timestamp,
+        ]
+    )
+    path = reports_dir / f"{filename}.json"
+    path.write_text(
+        json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return path
 
 
-def save_summary(reports: list[GenerationReport], reports_dir: Path) -> Path:
+def save_summary(
+    reports: list[GenerationReport],
+    reports_dir: Path,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
-    path = reports_dir / f"summary_{ts}.json"
+    timestamp = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S_%f")
+    path = reports_dir / f"summary_{timestamp}.json"
     payload = {
         "generated_at": datetime.now(BEIJING_TZ).isoformat(),
         "total": len(reports),
-        "success": sum(1 for r in reports if r.template_generated),
-        "reports": [r.to_dict() for r in reports],
+        "success": sum(1 for report in reports if report.template_generated),
+        "metadata": metadata or {},
+        "reports": [report.to_dict() for report in reports],
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path

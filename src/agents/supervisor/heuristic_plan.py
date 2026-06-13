@@ -84,6 +84,11 @@ def _params_textfsm_generator(
     uploaded_file_path: str | None,
     ticket_id: str | None,
 ) -> dict[str, Any]:
+    if uploaded_file_path:
+        return {"source_path": uploaded_file_path, "user_query": query}
+    path_match = re.search(r'["“](?P<path>[A-Za-z]:\\[^"”]+)["”]', query)
+    if path_match:
+        return {"source_path": path_match.group("path"), "user_query": query}
     return {"user_query": query}
 
 

@@ -36,6 +36,7 @@ export interface ChatIntentDSL {
   priority?: number
   description?: string
   match?: ChatIntentMatchDSL
+  required_context?: string[]
   context_from_state?: Record<string, string>
   context_defaults?: Record<string, unknown>
   response_template?: string
@@ -215,9 +216,11 @@ export function buildDslFromWizard(values: WizardFormValues): WorkflowDSL {
                 ? ['LLM', '分析']
                 : [],
         },
+        required_context: isFirewallChain ? ['ticket_id'] : [],
         context_defaults: { analysis_focus: 'summary' },
-        response_template:
-          '[OK] 已启动 Workflow\n\n- **流程 ID**: `{run_id}`\n- **工单**: {ticket_id}\n- **步骤**: {workflow_description}\n',
+        response_template: isFirewallChain
+          ? '[OK] 已启动 Workflow\n\n- **流程 ID**: `{run_id}`\n- **工单**: {ticket_id}\n- **步骤**: {workflow_description}\n'
+          : '[OK] 已启动 Workflow\n\n- **流程 ID**: `{run_id}`\n- **步骤**: {workflow_description}\n',
       },
     },
     on_complete: {
@@ -248,6 +251,7 @@ export function mergeChatYamlIntoDsl(dsl: WorkflowDSL, chatYaml: string): Workfl
 
   const requireAny: string[] = []
   const requireSecondary: string[] = []
+  const requiredContext: string[] = []
   const inRequireAny = chatYaml.match(/require_any:\s*\n((?:\s+-\s+.+\n)+)/)
   if (inRequireAny) {
     for (const line of inRequireAny[1].split('\n')) {
@@ -260,6 +264,13 @@ export function mergeChatYamlIntoDsl(dsl: WorkflowDSL, chatYaml: string): Workfl
     for (const line of inSecondary[1].split('\n')) {
       const m = line.match(/-\s+(.+)/)
       if (m) requireSecondary.push(m[1].trim())
+    }
+  }
+  const inRequiredContext = chatYaml.match(/required_context:\s*\n((?:\s+-\s+.+\n)+)/)
+  if (inRequiredContext) {
+    for (const line of inRequiredContext[1].split('\n')) {
+      const m = line.match(/-\s+(.+)/)
+      if (m) requiredContext.push(m[1].trim())
     }
   }
 
@@ -276,6 +287,8 @@ export function mergeChatYamlIntoDsl(dsl: WorkflowDSL, chatYaml: string): Workfl
           require_any_secondary:
             requireSecondary.length ? requireSecondary : dsl.triggers?.chat?.match?.require_any_secondary,
         },
+        required_context:
+          requiredContext.length ? requiredContext : dsl.triggers?.chat?.required_context,
         context_defaults: dsl.triggers?.chat?.context_defaults ?? { analysis_focus: 'summary' },
         response_template: dsl.triggers?.chat?.response_template,
       },

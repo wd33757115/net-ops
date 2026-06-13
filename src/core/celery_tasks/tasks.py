@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,48 @@ from src.infrastructure.storage.minio_client import get_minio_storage
 
 settings = get_settings()
 log = get_logger(__name__)
+
+
+def _persist_patrol_snapshots(
+    *,
+    details: list[dict[str, Any]],
+    snapshot_run_id: str,
+    db_path: str,
+    ticket_id: str | None = None,
+) -> dict[str, Any]:
+    """Import completed patrol reports into the snapshot store."""
+    from src.core.patrol.raw_importer import import_raw_capture
+
+    imported_commands = 0
+    imported_devices = 0
+    import_errors: list[str] = []
+    for detail in details:
+        output_file = detail.get("output_file")
+        if not output_file or not os.path.isfile(str(output_file)):
+            continue
+        try:
+            imported = import_raw_capture(
+                file_path=str(output_file),
+                db_path=db_path,
+                run_id=snapshot_run_id,
+                device_name=detail.get("device_name"),
+                ip=detail.get("ip"),
+                vendor=detail.get("vendor"),
+                model=detail.get("model"),
+                metadata={"ticket_id": ticket_id, "source": "device-patrol"},
+            )
+            imported_commands += int(imported.get("command_count") or 0)
+            imported_devices += 1
+        except Exception as exc:
+            import_errors.append(f"{output_file}: {exc}")
+
+    return {
+        "snapshot_run_id": snapshot_run_id,
+        "snapshot_db": db_path,
+        "snapshot_devices": imported_devices,
+        "snapshot_commands": imported_commands,
+        "snapshot_errors": import_errors,
+    }
 
 
 def _legacy_skill_execute(skill_name: str, **params: Any) -> dict[str, Any]:
@@ -176,6 +219,14 @@ def execute_device_patrol_task(
         import asyncio
         result = asyncio.run(patrol_tool.patrol_by_filter(device_filter, save_baseline))
 
+        snapshot_run_id = f"patrol-{getattr(self.request, 'id', None) or uuid.uuid4()}"
+        snapshot_result = _persist_patrol_snapshots(
+            details=result.details or [],
+            snapshot_run_id=snapshot_run_id,
+            db_path=settings.PATROL_SNAPSHOT_DB,
+            ticket_id=ticket_id,
+        )
+
         minio_client = get_minio_storage()
         download_url = None
         output_files = result.output_files or []
@@ -209,6 +260,8 @@ def execute_device_patrol_task(
             total_devices=result.total_devices,
             success_devices=result.success_devices,
             failed_devices=result.failed_devices,
+            snapshot_run_id=snapshot_run_id,
+            snapshot_commands=snapshot_result["snapshot_commands"],
             duration_ms=execution_time_ms,
         )
 
@@ -223,7 +276,8 @@ def execute_device_patrol_task(
             "failed_devices": result.failed_devices,
             "output_files": result.output_files,
             "execution_time_ms": execution_time_ms,
-            "message": result.message
+            "message": result.message,
+            **snapshot_result,
         }
 
     except Exception as e:

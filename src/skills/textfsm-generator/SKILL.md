@@ -1,14 +1,9 @@
 ---
 name: textfsm-generator
-version: 1.1.0
-description: 从聊天直输 CLI 或 SQLite 巡检原始输出生成并验证 TextFSM 模板，构建 Parser 资产库
+version: 1.2.0
+description: 从聊天 CLI、SQLite 或离线巡检文件目录生成并跨样本验证 TextFSM 模板，识别设备厂商和精确型号，发布共享 Parser 资产
 category: network
-tags:
-  - textfsm
-  - parser
-  - template
-  - network
-  - automation
+tags: [textfsm, parser, template, patrol, offline]
 author: wangdong
 domain: network
 min_permission_level: user
@@ -19,187 +14,197 @@ entry_script: scripts/run.py
 entry_output: none
 triggers:
   - 生成 TextFSM
-  - 生成TEXTFSM
   - TextFSM 模板
-  - TextFSM解析模板
+  - 离线巡检模板
   - 解析模板生成
   - textfsm generator
-  - Parser 资产
-  - display fan
-  - 风扇状态
-  - 解析 CLI 输出
 inputs:
+  - name: source_path
+    type: string
+    required: false
+    description: 离线巡检 txt/log 文件或目录；存在时启用 directory 模式
+  - name: recursive
+    type: boolean
+    required: false
+    description: 是否递归扫描 source_path，默认 true
   - name: user_query
     type: string
     required: false
-    description: 聊天中粘贴的完整内容（设备提示符 + 命令 + CLI 回显），与 raw_output 等价
+    description: 聊天中粘贴的命令和 CLI 输出
   - name: raw_output
     type: string
     required: false
-    description: 用户直输的 CLI 原始输出，可含命令首行
-  - name: cli_output
-    type: string
-    required: false
-    description: raw_output 别名
+    description: 单条 CLI 原始输出
   - name: command
     type: string
     required: false
-    description: 命令，如 display fan；若 user_query 已含命令可省略
+    description: 命令或目录模式命令过滤器
   - name: vendor
     type: string
     required: false
-    description: 设备厂商，直输模式未指定时按 display/show 推断
+    description: 显式厂商；与 model 同时提供时覆盖自动识别
   - name: model
     type: string
     required: false
-    description: 设备型号，直输默认 Generic；保存模板目录用 model_slug
+    description: 显式精确型号；与 vendor 同时提供时覆盖自动识别
   - name: category
     type: string
     required: false
-    description: 强制指定字段类别（如 fan），否则查 command_mapping
+    description: 单条输入模式的显式字段类别
   - name: patrol_db
     type: string
     required: false
-    description: 巡检 SQLite 路径，默认 db/patrol.db（无直输时启用）
+    description: SQLite 扫描模式的巡检数据库
   - name: devices_db
     type: string
     required: false
-    description: 设备库 SQLite 路径，默认 db/devices.db
+    description: SQLite 扫描模式的设备数据库
   - name: templates_dir
     type: string
     required: false
-    description: 模板输出目录，默认项目根 templates/
-  - name: max_retries
-    type: integer
+    description: 共享模板目录，默认 src/skills/shared/textfsm-templates
+  - name: reports_dir
+    type: string
     required: false
-    description: 验证失败自动修复最大重试次数，默认 3
+    description: 生成与跨样本验证报告目录
+  - name: publish
+    type: boolean
+    required: false
+    description: 验证通过后是否发布模板，默认 true
   - name: dry_run
     type: boolean
     required: false
-    description: 为 true 时验证通过但不写入模板文件
-  - name: use_semantic_extraction
-    type: boolean
+    description: 仅发现、生成和验证，不写模板
+  - name: minimum_sample_pass_rate
+    type: number
     required: false
-    description: 默认 true；用 LLM 从自然语言理解 vendor/model（非关键词硬编码）
+    description: 模板发布所需样本通过率，默认 1.0
+  - name: max_samples_per_prompt
+    type: integer
+    required: false
+    description: 提供给 LLM 的代表样本上限，默认 3；验证仍覆盖全部样本
+  - name: max_retries
+    type: integer
+    required: false
+    description: 跨样本验证失败后的最大修复次数，默认 3
   - name: force_generate
     type: boolean
     required: false
-    description: 直输模式默认 true（覆盖已有模板）；数据库模式默认 false
-outputs:
-  - name: parsed_records
-    type: object
-    description: 用生成或已有模板解析出的结构化记录（如 slot/fan/state）
-  - name: reports
-    type: object
-    description: 每条 (vendor, model, command) 的验证报告
-  - name: summary_path
+    description: 是否覆盖已存在的共享模板
+  - name: mapping_config
     type: string
-    description: 汇总报告 JSON 路径
+    required: false
+    description: 命令白名单配置
+  - name: categories_config
+    type: string
+    required: false
+    description: 字段与实体契约配置
+  - name: device_signatures_config
+    type: string
+    required: false
+    description: 设备识别规则配置
+  - name: command_aliases_config
+    type: string
+    required: false
+    description: 命令别名配置
+outputs:
   - name: mode
     type: string
-    description: direct（聊天直输）或 database（SQLite 扫描）
+    description: direct、database 或 directory
+  - name: generated_templates
+    type: object
+    description: 已发布共享模板路径
+  - name: device_profiles
+    type: object
+    description: 自动识别的厂商、型号、设备族、置信度与证据
+  - name: reports
+    type: object
+    description: 每个型号和命令的全样本验证报告
+  - name: summary_path
+    type: string
+    description: 批次汇总报告
 enabled: true
 fallback_to_rag: false
 ---
 
 # TextFSM Generator
 
-独立 **Parser 资产生成** Skill，支持两种数据来源：
+将 CLI 原始输出转换为可复用、可验证的共享 Parser 资产。
 
-1. **聊天直输（推荐）**：用户在对话中粘贴设备命令与 CLI 回显，即时生成模板并返回结构化结果
-2. **SQLite 扫描**：从巡检库发现「有 raw、无 structured」的记录批量生成
+## 核心能力
 
-## 聊天直输示例
-
-用户输入：
-
-```
-<XA-FOTIC-Ant-SW>display fan
- Slot 1:
- Fan 1:
- State    : Normal
- ...
- Fan 4:
- State    : Normal
-```
-
-Supervisor 将全文传入 `user_query`（或 `raw_output`）。Skill 将：
-
-1. 识别命令 `display fan`
-2. 映射 category `fan` → 字段 `slot`, `fan`, `state`
-3. LLM 生成 TextFSM → 四层验证 → 保存模板
-4. 返回 `parsed_records`（各风扇状态）
-
-可选参数：`vendor=Huawei`、`model=S5700`、`category=fan`
-
-**厂商/型号识别（语义，非硬编码）**：默认启用 LLM 从自然语言理解设备信息，例如：
-
-- `华三核心 S5590` → vendor=H3C, model=S5590
-- `品牌H3C,型号S5590` → vendor=H3C, model=S5590
-- `Cisco 9300 的 show cpu` → vendor=Cisco, model=9300
-
-LLM 会参考 `command_mapping.yaml` 中已有设备档案拼写，但**不会**写死「品牌/型号」关键词规则。未提及则 vendor/model 为空，再按 CLI 命令兜底（display→Huawei）。可设 `use_semantic_extraction=false` 关闭。
-
-## 核心原则
-
-1. **参数验证**：直输模式至少需要 user_query / raw_output / cli_output 之一
-2. **字段受控**：LLM 不得自由命名字段，必须查 command_mapping → command_categories
-3. **四层验证**：编译 → 解析(record>0) → 必填字段 → 值合法性
-4. **自动修复**：验证失败将错误反馈 LLM，最多重试 3 次
-5. **不编造**：无法识别命令或类别时如实报告并跳过
-6. **路径兼容**：模板保存为 `templates/{model_slug}/{command_slug}.textfsm`，与 device-patrol 一致
-
-## 架构约束
-
-1. **禁止修改** `device-patrol`
-2. **禁止** device-patrol 调用本 Skill
-3. SQLite 模式 **只读** 数据库
-4. 配置驱动，不写死单一 Skill 依赖
+- 离线文件和目录扫描。
+- 厂商、精确型号和设备族识别。
+- 命令白名单、别名归一化和跨样本分组。
+- TextFSM 生成、修复、验证、原子发布和 manifest 管理。
 
 ## 工作流程
 
-**直输模式**（存在 user_query / raw_output / cli_output）：
+1. 读取聊天 CLI、SQLite 或离线 `.txt/.log` 文件。
+2. 复用巡检命令切分器，规范化命令别名。
+3. 优先从版本和库存命令识别厂商、精确型号及设备族。
+4. 只处理 `config/command_mapping.yaml` 白名单中的命令。
+5. 按 `vendor + model + command` 聚合全部样本。
+6. 使用代表样本生成模板，并对该组全部样本验证。
+7. 通过配置的发布门槛后，原子写入共享目录并更新 manifest。
 
-```
-粘贴 CLI → 解析 command + 输出体 → mapping → LLM → 验证 → 保存 → parsed_records
-```
+## 核心原则
 
-**数据库模式**（无直输文本）：
+- Parser 资产独立于生成 Skill，可被巡检、导入和回放流程共同消费。
+- 结构化字段首先服务于稳定实体比较和事件构建，不追求解析全部 CLI。
+- 同型号全部样本的验证结果决定模板是否发布。
 
-```
-SQLite 发现缺失 → 去重 → 同上
-```
+## 输入参数说明
 
-## 字段类别 fan
-
-
-| 字段    | 说明          |
-| ----- | ----------- |
-| slot  | 槽位，如 1      |
-| fan   | 风扇编号，如 1    |
-| state | 状态，如 Normal |
-
+- `source_path` 优先级最高，启用离线目录模式。
+- `vendor/model` 必须同时提供才覆盖自动识别。
+- `publish=false` 或 `dry_run=true` 不写共享资产。
+- `minimum_sample_pass_rate` 默认 `1.0`。
 
 ## 输出格式
 
 ```json
 {
   "success": true,
-  "mode": "direct",
-  "parsed_records": [
-    {"slot": "1", "fan": "1", "state": "Normal"}
-  ]
+  "mode": "directory",
+  "files_scanned": 54,
+  "devices_detected": 54,
+  "candidate_groups": 80,
+  "generated_templates": [],
+  "validation_pass_rate": 1.0,
+  "shared_templates_dir": "src/skills/shared/textfsm-templates"
+}
+```
+
+## 示例
+
+目录模式参数：
+
+```json
+{
+  "source_path": "C:\\patrol-data",
+  "recursive": true,
+  "publish": true,
+  "minimum_sample_pass_rate": 1.0
 }
 ```
 
 ## 安全规范
 
-1. 直输内容仅用于生成模板，不连接任何设备
-2. 不在日志中输出敏感凭证
-3. 生成的模板写入 `templates/`，可人工复核
+- 不连接或执行任何网络设备命令。
+- 不根据 `display/show` 猜测离线文件的厂商。
+- 未识别设备和未配置命令必须明确报告并跳过。
+- LLM 不得自行扩展字段；字段由 `command_categories.yaml` 控制。
+- 默认要求全部样本通过后才发布。
+- 共享模板位于 `src/skills/shared/textfsm-templates/`。
+- 根目录 `templates/` 仅作为旧资产只读回退。
+
+## 实际执行说明
+
+平台通过 `scripts/run.py --params <json>` 执行。目录模式仅对命令白名单中的候选组调用 LLM，所有样本都会参与本地 TextFSM 验证。
 
 ## 注意事项
 
-- 依赖 `textfsm` 与 `DEEPSEEK_API_KEY`
-- 模板路径：`templates/{model_slug}/display_fan.textfsm`（兼容 device-patrol）
-
+- 依赖 `textfsm` 和已配置的 LLM API。
+- 文件名识别仅为低置信度回退，报告中会保留识别来源。
+- 已有模板默认只验证不覆盖；使用 `force_generate=true` 才重新生成。

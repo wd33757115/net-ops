@@ -15,6 +15,14 @@ def test_patrol_does_not_match_firewall_workflow():
     assert match_chat_workflow("巡检设备", "chat") is None
 
 
+def test_patrol_analysis_workflow_does_not_require_ticket():
+    intent = match_chat_workflow("巡检设备并分析变化", "chat")
+
+    assert intent is not None
+    assert intent.workflow == "patrol-change-event"
+    assert intent.required_context == []
+
+
 def test_firewall_workflow_requires_ticket_in_query():
     assert match_chat_workflow("生成防火墙策略并编写变更工单", "chat") is None
     intent = match_chat_workflow(

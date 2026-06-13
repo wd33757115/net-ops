@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
+from src.core.patrol.textfsm_assets import discover_textfsm_templates
 
 # ---------- 导入设备管理模块 ----------
 from device_manager import DBManager as DeviceDBManager
@@ -424,12 +425,10 @@ class DevicePatroller:
     def _discover_templates(self, model: str) -> Dict[str, Path]:
         if model in self.templates_cache:
             return self.templates_cache[model]
-        model_dir = self.templates_dir / model.replace(" ", "_")
-        mapping = {}
-        if model_dir.is_dir():
-            for p in model_dir.iterdir():
-                if p.suffix.lower() == ".textfsm":
-                    mapping[p.name] = p
+        mapping = discover_textfsm_templates(
+            model=model,
+            legacy_root=self.templates_dir,
+        )
         self.templates_cache[model] = mapping
         return mapping
 

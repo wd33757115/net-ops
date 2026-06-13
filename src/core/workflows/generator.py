@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from src.core.plugins.chat_intent import get_chat_intent_registry
+from src.core.plugins.itsm_webhook import get_itsm_webhook_registry
 from src.core.workflows.dsl import (
     ExpressionRef,
     GenerateOptions,
@@ -19,8 +21,6 @@ from src.core.workflows.dsl import (
 from src.core.workflows.manager import save_plugin, validate_plugin_files
 from src.core.workflows.mapping import apply_auto_mapping
 from src.core.workflows.registry import WORKFLOWS_ROOT, list_templates, load_workflows
-from src.core.plugins.chat_intent import get_chat_intent_registry
-from src.core.plugins.itsm_webhook import get_itsm_webhook_registry
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +114,12 @@ def build_chat_intent_dict(dsl: WorkflowDSL) -> dict[str, Any] | None:
     }
     if match_block:
         data["match"] = match_block
+    if chat.required_context:
+        data["required_context"] = chat.required_context
     if chat.context_from_state:
         data["context_from_state"] = chat.context_from_state
+    if chat.context_from_query:
+        data["context_from_query"] = chat.context_from_query
     if chat.context_defaults:
         data["context_defaults"] = chat.context_defaults
     if chat.response_template:
@@ -240,7 +244,10 @@ def generate_and_persist(
         }
 
     if result["persisted"]:
-        from src.core.workflows.metadata_repo import transition_plugin_status, upsert_plugin_metadata
+        from src.core.workflows.metadata_repo import (
+            transition_plugin_status,
+            upsert_plugin_metadata,
+        )
         from src.core.workflows.versioning import publish_plugin
 
         if opts.publish:
@@ -343,7 +350,18 @@ def dsl_from_collab_template(
             require_any=chat_match_any or ["关键词"],
             require_any_secondary=chat_match_secondary or (["LLM", "分析"] if include_llm else []),
         ),
+        required_context=["ticket_id"] if is_firewall_chain else [],
         context_defaults={"analysis_focus": "summary"},
+        response_template=(
+            "[OK] 已启动 Workflow\n\n"
+            "- **流程 ID**: `{run_id}`\n"
+            "- **工单**: {ticket_id}\n"
+            "- **步骤**: {workflow_description}\n"
+            if is_firewall_chain
+            else "[OK] 已启动 Workflow\n\n"
+            "- **流程 ID**: `{run_id}`\n"
+            "- **步骤**: {workflow_description}\n"
+        ),
     )
 
     on_complete_msg = "防火墙变更与 LLM 分析已完成" if include_llm and is_firewall_chain else "Workflow 已完成"
@@ -424,11 +442,15 @@ def dsl_from_plugin_files(
                 require_all=list(match_raw.get("require_all") or []),
                 require_any_secondary=list(match_raw.get("require_any_secondary") or []),
             ),
+            required_context=list(chat_raw.get("required_context") or []),
             context_from_state=dict(chat_raw.get("context_from_state") or {}),
+            context_from_query=dict(chat_raw.get("context_from_query") or {}),
             context_defaults=dict(chat_raw.get("context_defaults") or {}),
             response_template=str(
                 chat_raw.get("response_template")
-                or "[OK] 已启动 Workflow\n\n- **流程 ID**: `{run_id}`\n- **工单**: {ticket_id}\n- **步骤**: {workflow_description}\n"
+                or "[OK] 已启动 Workflow\n\n"
+                "- **流程 ID**: `{run_id}`\n"
+                "- **步骤**: {workflow_description}\n"
             ),
         )
 
@@ -469,4 +491,3 @@ def dsl_from_plugin_files(
         triggers=triggers,
         on_complete=on_complete,
     )
-

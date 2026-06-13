@@ -15,6 +15,9 @@ match:
     - 结果分析
     - LLM分析
 
+required_context:
+  - ticket_id
+
 context_from_state:
   ticket_title: ticket_title
   policy_file_url: uploaded_file_path

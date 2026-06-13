@@ -63,6 +63,7 @@ def test_generate_plugin_files_contains_all_artifacts():
     chat = yaml.safe_load(files["CHAT.intent.yaml"])
     assert chat["workflow"] == "test-firewall-llm"
     assert "防火墙" in chat["match"]["require_any"]
+    assert chat["required_context"] == ["ticket_id"]
 
 
 def test_preview_workflow_validates():

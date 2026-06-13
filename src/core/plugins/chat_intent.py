@@ -14,7 +14,12 @@ from typing import Any
 import yaml
 
 from src.core.plugins.context_mapping import map_state_to_context
-from src.core.workflows.registry import WORKFLOWS_ROOT, format_steps_flow, get_template, resolve_active_steps
+from src.core.workflows.registry import (
+    WORKFLOWS_ROOT,
+    format_steps_flow,
+    get_template,
+    resolve_active_steps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +33,10 @@ class ChatIntentPlugin:
     require_any: list[str] = field(default_factory=list)
     require_all: list[str] = field(default_factory=list)
     require_any_secondary: list[str] = field(default_factory=list)
+    required_context: list[str] = field(default_factory=list)
     auto_sources: list[str] = field(default_factory=list)
     context_from_state: dict[str, str] = field(default_factory=dict)
+    context_from_query: dict[str, str] = field(default_factory=dict)
     context_defaults: dict[str, Any] = field(default_factory=dict)
     response_template: str = ""
 
@@ -69,8 +76,10 @@ class ChatIntentRegistry:
             require_any=list(match.get("require_any") or []),
             require_all=list(match.get("require_all") or []),
             require_any_secondary=list(match.get("require_any_secondary") or match.get("require_any_after") or []),
+            required_context=list(raw.get("required_context") or []),
             auto_sources=list(raw.get("auto_if_source") or raw.get("auto_sources") or []),
             context_from_state=dict(raw.get("context_from_state") or {}),
+            context_from_query=dict(raw.get("context_from_query") or {}),
             context_defaults=dict(raw.get("context_defaults") or {}),
             response_template=str(raw.get("response_template") or ""),
         )
@@ -97,6 +106,15 @@ TICKET_REQUIRED_MSG = (
 )
 
 
+class MissingRequiredContextError(ValueError):
+    """Chat Intent 声明的必需上下文无法从当前请求解析。"""
+
+    def __init__(self, missing_fields: list[str]):
+        self.missing_fields = missing_fields
+        labels = "、".join(missing_fields)
+        super().__init__(f"启动该 Workflow 还缺少必要信息：{labels}")
+
+
 def _current_query(state: dict[str, Any]) -> str:
     messages = state.get("messages") or []
     if not messages:
@@ -115,6 +133,29 @@ def require_ticket_id_from_query(query: str) -> str:
     if not ticket_id:
         raise MissingTicketIdError(TICKET_REQUIRED_MSG)
     return ticket_id
+
+
+def _extract_context_from_query(query: str) -> dict[str, Any]:
+    """当前消息上下文提取器注册点；新增字段不应修改匹配框架。"""
+    from src.common.ticket_utils import extract_ticket_id
+
+    context: dict[str, Any] = {}
+    if ticket_id := extract_ticket_id(query or ""):
+        context["ticket_id"] = ticket_id
+    paths = re.findall(r'(?:"([^"]+)"|\'([^\']+)\'|([A-Za-z]:\\[^\s，。；;]+))', query or "")
+    normalized_paths = [next(part for part in match if part) for match in paths]
+    for index, path in enumerate(normalized_paths):
+        context[f"path_{index}"] = path
+    if normalized_paths:
+        context["file_path"] = normalized_paths[0]
+    return context
+
+
+QUERY_CONTEXT_FIELDS = frozenset({"ticket_id", "file_path", "path_0", "path_1"})
+
+
+def _missing_required_context(context: dict[str, Any], required: list[str]) -> list[str]:
+    return [field for field in required if context.get(field) in (None, "", [], {})]
 
 
 _registry = ChatIntentRegistry()
@@ -176,35 +217,65 @@ def find_matching_intents(query: str, source: str | None) -> list[ChatIntentPlug
 
 
 def match_chat_workflow(query: str, source: str | None) -> ChatIntentPlugin | None:
-    from src.common.ticket_utils import extract_ticket_id
-
     matched = find_matching_intents(query, source)
     if not matched:
         return None
     # Webhook auto_sources 已在 find_matching_intents 内直接返回
     if source and source in (matched[0].auto_sources or []):
         return matched[0]
-    if not extract_ticket_id(query or ""):
-        return None
-    return matched[0]
+    extracted = _extract_context_from_query(query)
+    for intent in matched:
+        query_context = {
+            target: extracted.get(source)
+            for target, source in intent.context_from_query.items()
+            if extracted.get(source) not in (None, "")
+        }
+        initial = {**intent.context_defaults, **extracted, **query_context}
+        query_required = [field for field in intent.required_context if field in QUERY_CONTEXT_FIELDS]
+        if not _missing_required_context(initial, query_required):
+            return intent
+    return None
 
 
 def build_chat_workflow_context(state: dict[str, Any], intent: ChatIntentPlugin) -> dict[str, Any]:
     query = _current_query(state)
-    ticket_id = require_ticket_id_from_query(query)
 
     ctx = dict(intent.context_defaults)
-    # 工单号仅来自当前消息，禁止从 state / 历史会话映射
+    # ticket_id 仅来自当前消息，禁止从 state / 历史会话映射。
     state_mapping = {
         k: v for k, v in intent.context_from_state.items() if k != "ticket_id" and v != "ticket_id"
     }
     ctx.update(map_state_to_context(state, state_mapping))
-    ctx["ticket_id"] = ticket_id
+    extracted = _extract_context_from_query(query)
+    ctx.update(extracted)
+    ctx.update(
+        {
+            target: extracted.get(source)
+            for target, source in intent.context_from_query.items()
+            if extracted.get(source) not in (None, "")
+        }
+    )
+    missing = _missing_required_context(ctx, intent.required_context)
+    if missing:
+        if missing == ["ticket_id"]:
+            raise MissingTicketIdError(TICKET_REQUIRED_MSG)
+        raise MissingRequiredContextError(missing)
     if query:
         ctx.setdefault("change_background", query[:500])
     if state.get("ticket_title"):
         ctx.setdefault("ticket_title", state.get("ticket_title"))
     return ctx
+
+
+def build_default_workflow_context(state: dict[str, Any]) -> dict[str, Any]:
+    """无 Chat Intent 时的通用上下文，不施加任何领域必填约束。"""
+    query = _current_query(state)
+    context: dict[str, Any] = {
+        "query": query,
+        "uploaded_file_path": state.get("uploaded_file_path"),
+    }
+    context.update(_extract_context_from_query(query))
+    return {key: value for key, value in context.items() if value not in (None, "")}
 
 
 def format_workflow_start_message(intent: ChatIntentPlugin, run_id: str, context: dict[str, Any]) -> str:

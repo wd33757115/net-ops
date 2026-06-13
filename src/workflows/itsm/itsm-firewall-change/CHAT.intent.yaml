@@ -18,6 +18,9 @@ match:
     - 变更流程
     - 开通
 
+required_context:
+  - ticket_id
+
 auto_if_source:
   - itsm_webhook
 

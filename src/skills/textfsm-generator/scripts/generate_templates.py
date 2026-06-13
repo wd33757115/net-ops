@@ -1,28 +1,59 @@
 # SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""TextFSM 模板资产生成主流程。"""
+"""TextFSM parser asset generation for direct, database, and directory inputs."""
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from config_loader import (
-    load_categories,
-    load_command_mapping,
+    CategorySpec,
     list_device_profiles,
-    required_fields_for_category,
+    load_categories,
+    load_command_aliases,
+    load_command_mapping,
+    load_device_signatures,
+    normalize_command,
     resolve_category,
 )
 from db_reader import TemplateCandidate, discover_missing_template_candidates
+from directory_reader import DirectoryCandidate, TemplateSample, discover_directory_candidates
 from input_parser import extract_direct_input, infer_vendor_model
 from llm_generator import generate_template_text
 from report_generator import GenerationReport, save_report, save_summary
-from template_validator import strip_llm_template, validate_template
+from template_validator import ValidationResult, strip_llm_template, validate_template
+
+from src.core.patrol.textfsm_assets import (
+    SHARED_TEXTFSM_ROOT,
+    atomic_write_text,
+    command_template_name,
+    remove_manifest_entry,
+    safe_slug,
+    template_path,
+    upsert_manifest_entry,
+)
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REPORTS = SKILL_ROOT / "reports"
+PARSER_VERSION = "1.0.0"
+
+
+@dataclass(frozen=True)
+class Candidate:
+    vendor: str
+    model: str
+    family: str | None
+    command: str
+    category: str | None
+    samples: tuple[TemplateSample, ...]
+    confidence: float | None = None
+    evidence_command: str | None = None
+    evidence_text: str | None = None
 
 
 def project_root() -> Path:
@@ -30,293 +61,488 @@ def project_root() -> Path:
 
 
 def cmd_to_template_filename(command: str) -> str:
-    return command.strip().lower().replace(" ", "_") + ".textfsm"
+    return command_template_name(command)
 
 
 def model_to_dirname(model: str) -> str:
-    """与 device-patrol 的 model.replace(' ', '_') 保持一致。"""
-    return model.strip().replace(" ", "_")
+    return safe_slug(model)
 
 
 def resolve_template_path(templates_dir: Path, model: str, command: str) -> Path:
-    return templates_dir / model_to_dirname(model) / cmd_to_template_filename(command)
+    return template_path(templates_dir, model, command)
 
 
-def _build_summary_message(reports: list[GenerationReport], *, mode: str) -> str:
-    if not reports:
-        if mode == "direct":
-            return "未能处理输入，请检查命令与 CLI 输出是否完整"
-        return "未发现需要生成模板的记录（SQLite 中无缺失结构化数据的条目）"
+def _direct_candidate(params: dict[str, Any], mappings: list[Any]) -> Candidate | None:
+    direct = extract_direct_input(params)
+    if not direct:
+        return None
+    vendor, model = infer_vendor_model(
+        params,
+        direct,
+        known_devices=list_device_profiles(mappings),
+    )
+    command = normalize_command(direct.command)
+    return Candidate(
+        vendor=vendor,
+        model=model,
+        family=None,
+        command=command,
+        category=str(params.get("category") or "").strip() or None,
+        samples=(
+            TemplateSample(
+                file_path="direct_input",
+                device_id=direct.device_prompt or "chat-input",
+                command=command,
+                output=direct.raw_output,
+            ),
+        ),
+        confidence=1.0 if params.get("vendor") and params.get("model") else None,
+    )
 
-    lines: list[str] = []
-    for r in reports:
-        if r.parsed_records:
-            lines.append(f"**{r.command}** — 解析 {len(r.parsed_records)} 条记录：")
-            for rec in r.parsed_records:
-                parts = ", ".join(f"{k}={v}" for k, v in rec.items())
-                lines.append(f"- {parts}")
-        elif r.template_generated:
-            lines.append(f"**{r.command}** — 模板已生成 ({r.record_count} 条记录)")
-        elif r.skipped_reason:
-            lines.append(f"**{r.command}** — 跳过: {r.skipped_reason}")
-        else:
-            lines.append(f"**{r.command}** — 生成失败")
 
-    ok = sum(1 for r in reports if r.template_generated or r.parsed_records)
-    prefix = "直输模式" if mode == "direct" else "数据库模式"
-    return f"{prefix}完成 ({ok}/{len(reports)}):\n" + "\n".join(lines)
+def _database_candidates(items: list[TemplateCandidate]) -> list[Candidate]:
+    return [
+        Candidate(
+            vendor=item.vendor,
+            model=item.model,
+            family=None,
+            command=normalize_command(item.command),
+            category=None,
+            samples=(
+                TemplateSample(
+                    file_path=item.source_table,
+                    device_id=item.device_id,
+                    command=normalize_command(item.command),
+                    output=item.sample_output,
+                ),
+            ),
+        )
+        for item in items
+    ]
+
+
+def _directory_candidates(items: tuple[DirectoryCandidate, ...]) -> list[Candidate]:
+    return [
+        Candidate(
+            vendor=item.vendor,
+            model=item.model,
+            family=item.family,
+            command=item.command,
+            category=item.category,
+            samples=item.samples,
+            confidence=item.confidence,
+            evidence_command=item.evidence_command,
+            evidence_text=item.evidence_text,
+        )
+        for item in items
+    ]
+
+
+def _prompt_samples(samples: tuple[TemplateSample, ...], limit: int) -> str:
+    selected = samples[: max(1, limit)]
+    parts = [
+        f"===== sample {index + 1}: {sample.device_id} / {sample.file_path} =====\n"
+        f"{sample.output}"
+        for index, sample in enumerate(selected)
+    ]
+    return "\n\n".join(parts)
+
+
+def _validate_samples(
+    template_text: str,
+    samples: tuple[TemplateSample, ...],
+    spec: CategorySpec,
+) -> tuple[list[ValidationResult], list[dict[str, Any]]]:
+    validations: list[ValidationResult] = []
+    details: list[dict[str, Any]] = []
+    for sample in samples:
+        result = validate_template(
+            template_text,
+            sample.output,
+            spec.required_fields,
+            spec.validators,
+            allow_empty=spec.allow_empty,
+            empty_patterns=spec.empty_patterns,
+        )
+        validations.append(result)
+        details.append(
+            {
+                "file_path": sample.file_path,
+                "device_id": sample.device_id,
+                "valid": result.is_valid,
+                "record_count": result.record_count,
+                "empty_accepted": result.empty_accepted,
+                "field_coverage": result.field_coverage,
+                "validation_score": result.validation_score,
+                "errors": result.errors,
+            }
+        )
+    return validations, details
+
+
+def _manifest_entry(
+    *,
+    candidate: Candidate,
+    category: str,
+    spec: CategorySpec,
+    target: Path,
+    templates_dir: Path,
+    template_text: str,
+    pass_rate: float,
+) -> dict[str, Any]:
+    return {
+        "vendor": candidate.vendor,
+        "model": candidate.model,
+        "family": candidate.family,
+        "command": candidate.command,
+        "category": category,
+        "entity_type": spec.entity_type,
+        "primary_keys": spec.primary_keys,
+        "required_fields": spec.required_fields,
+        "optional_fields": spec.optional_fields,
+        "parser_version": PARSER_VERSION,
+        "template_path": str(target.relative_to(templates_dir)),
+        "sha256": hashlib.sha256(template_text.encode("utf-8")).hexdigest(),
+        "sample_count": len(candidate.samples),
+        "validation_pass_rate": pass_rate,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _report_failure(
+    candidate: Candidate,
+    *,
+    mode: str,
+    reason: str,
+    reports_dir: Path,
+) -> GenerationReport:
+    report = GenerationReport(
+        vendor=candidate.vendor,
+        model=candidate.model,
+        family=candidate.family,
+        command=candidate.command,
+        category=candidate.category or "",
+        template_generated=False,
+        compile_success=False,
+        record_count=0,
+        field_coverage=0,
+        validation_score=0,
+        retry_count=0,
+        skipped_reason=reason,
+        mode=mode,
+        sample_count=len(candidate.samples),
+        confidence=candidate.confidence,
+        evidence_command=candidate.evidence_command,
+        evidence_text=candidate.evidence_text,
+    )
+    save_report(report, reports_dir)
+    return report
+
+
+def _process_candidate(
+    candidate: Candidate,
+    *,
+    categories: dict[str, CategorySpec],
+    mappings: list[Any],
+    templates_dir: Path,
+    reports_dir: Path,
+    max_retries: int,
+    dry_run: bool,
+    publish: bool,
+    force_overwrite: bool,
+    minimum_pass_rate: float,
+    max_samples_per_prompt: int,
+    explicit_category: str | None,
+    mode: str,
+) -> GenerationReport:
+    category = candidate.category or resolve_category(
+        candidate.vendor,
+        candidate.model,
+        candidate.command,
+        mappings,
+        explicit_category=explicit_category,
+    )
+    if not category:
+        return _report_failure(
+            candidate,
+            mode=mode,
+            reason="command_not_configured",
+            reports_dir=reports_dir,
+        )
+    spec = categories.get(category)
+    if not spec or not spec.required_fields:
+        return _report_failure(
+            candidate,
+            mode=mode,
+            reason=f"category_not_configured:{category}",
+            reports_dir=reports_dir,
+        )
+
+    target = resolve_template_path(templates_dir, candidate.model, candidate.command)
+    template_text = ""
+    retry_count = 0
+    validations: list[ValidationResult] = []
+    sample_results: list[dict[str, Any]] = []
+    target_existed = target.is_file()
+    previous_asset_valid = False
+
+    if target_existed:
+        template_text = target.read_text(encoding="utf-8")
+        validations, sample_results = _validate_samples(template_text, candidate.samples, spec)
+        existing_passed = sum(result.is_valid for result in validations)
+        existing_rate = existing_passed / len(validations) if validations else 0.0
+        previous_asset_valid = bool(validations) and existing_rate >= minimum_pass_rate
+    if target_existed and previous_asset_valid and not force_overwrite:
+        skipped_reason = "template_exists"
+    else:
+        skipped_reason = None
+        previous_errors: list[str] = []
+        missing_fields: list[str] = []
+        value_errors: list[str] = []
+        for attempt in range(max_retries + 1):
+            retry_count = attempt
+            raw = generate_template_text(
+                vendor=candidate.vendor,
+                model=candidate.model,
+                command=candidate.command,
+                cli_output=_prompt_samples(candidate.samples, max_samples_per_prompt),
+                required_fields=spec.required_fields,
+                optional_fields=spec.optional_fields,
+                previous_template=template_text or None,
+                validation_errors=previous_errors,
+                missing_fields=missing_fields,
+                value_errors=value_errors,
+            )
+            template_text = strip_llm_template(raw)
+            validations, sample_results = _validate_samples(
+                template_text, candidate.samples, spec
+            )
+            passed = sum(result.is_valid for result in validations)
+            pass_rate = passed / len(validations) if validations else 0.0
+            if pass_rate >= minimum_pass_rate:
+                break
+            failed = [result for result in validations if not result.is_valid]
+            previous_errors = [
+                error for result in failed for error in result.errors
+            ][:30]
+            missing_fields = sorted(
+                {field for result in failed for field in result.missing_fields}
+            )
+            value_errors = [
+                error for result in failed for error in result.value_errors
+            ][:30]
+
+    passed_samples = sum(result.is_valid for result in validations)
+    pass_rate = passed_samples / len(validations) if validations else 0.0
+    accepted = bool(validations) and pass_rate >= minimum_pass_rate
+    generated = False
+    if (
+        accepted
+        and publish
+        and not dry_run
+        and (force_overwrite or not target.is_file() or not previous_asset_valid)
+    ):
+        atomic_write_text(target, template_text)
+        generated = True
+        upsert_manifest_entry(
+            _manifest_entry(
+                candidate=candidate,
+                category=category,
+                spec=spec,
+                target=target,
+                templates_dir=templates_dir,
+                template_text=template_text,
+                pass_rate=pass_rate,
+            ),
+            root=templates_dir,
+        )
+    elif accepted and publish and not dry_run and target.is_file():
+        upsert_manifest_entry(
+            _manifest_entry(
+                candidate=candidate,
+                category=category,
+                spec=spec,
+                target=target,
+                templates_dir=templates_dir,
+                template_text=template_text,
+                pass_rate=pass_rate,
+            ),
+            root=templates_dir,
+        )
+    elif target_existed and not previous_asset_valid and target.is_file():
+        rejected_dir = reports_dir / "rejected"
+        rejected_dir.mkdir(parents=True, exist_ok=True)
+        rejected = rejected_dir / (
+            f"{safe_slug(candidate.vendor)}_{safe_slug(candidate.model)}_"
+            f"{command_template_name(candidate.command)}"
+        )
+        target.replace(rejected)
+        remove_manifest_entry(
+            vendor=candidate.vendor,
+            model=candidate.model,
+            command=candidate.command,
+            root=templates_dir,
+        )
+
+    all_records = [
+        record for result in validations if result.is_valid for record in result.records
+    ]
+    errors = [
+        error for result in validations if not result.is_valid for error in result.errors
+    ]
+    report = GenerationReport(
+        vendor=candidate.vendor,
+        model=candidate.model,
+        family=candidate.family,
+        command=candidate.command,
+        category=category,
+        entity_type=spec.entity_type,
+        primary_keys=spec.primary_keys,
+        template_generated=generated,
+        compile_success=all(result.compile_success for result in validations),
+        record_count=sum(result.record_count for result in validations),
+        field_coverage=min(
+            (result.field_coverage for result in validations), default=0
+        ),
+        validation_score=min(
+            (result.validation_score for result in validations), default=0
+        ),
+        retry_count=retry_count,
+        template_path=str(target) if accepted else None,
+        skipped_reason=(
+            skipped_reason
+            if skipped_reason
+            else "dry_run"
+            if accepted and (dry_run or not publish)
+            else "sample_pass_rate_below_threshold"
+            if not accepted
+            else None
+        ),
+        errors=errors or None,
+        parsed_records=all_records or None,
+        mode=mode,
+        sample_count=len(candidate.samples),
+        passed_samples=passed_samples,
+        validation_pass_rate=pass_rate,
+        sample_results=sample_results,
+        confidence=candidate.confidence,
+        evidence_command=candidate.evidence_command,
+        evidence_text=candidate.evidence_text,
+    )
+    save_report(report, reports_dir)
+    return report
 
 
 def generate_templates(params: dict[str, Any]) -> dict[str, Any]:
     root = project_root()
-    patrol_db = Path(params.get("patrol_db") or root / "db" / "patrol.db")
-    devices_db = Path(params.get("devices_db") or root / "db" / "devices.db")
-    templates_dir = Path(params.get("templates_dir") or root / "templates")
+    templates_dir = Path(params.get("templates_dir") or SHARED_TEXTFSM_ROOT)
     reports_dir = Path(params.get("reports_dir") or DEFAULT_REPORTS)
-    categories_path = Path(params.get("categories_config") or SKILL_ROOT / "config" / "command_categories.yaml")
-    mapping_path = Path(params.get("mapping_config") or SKILL_ROOT / "config" / "command_mapping.yaml")
-    max_retries = int(params.get("max_retries") or 3)
-    dry_run = bool(params.get("dry_run", False))
-
-    categories = load_categories(categories_path)
-    mappings = load_command_mapping(mapping_path)
-
-    direct = extract_direct_input(params)
+    categories = load_categories(
+        Path(params.get("categories_config") or SKILL_ROOT / "config" / "command_categories.yaml")
+    )
+    mappings = load_command_mapping(
+        Path(params.get("mapping_config") or SKILL_ROOT / "config" / "command_mapping.yaml")
+    )
+    aliases = load_command_aliases(
+        Path(params.get("command_aliases_config") or SKILL_ROOT / "config" / "command_aliases.yaml")
+    )
     reports: list[GenerationReport] = []
+    discovery_metadata: dict[str, Any] = {}
 
-    if direct:
-        vendor, model = infer_vendor_model(
-            params,
-            direct,
-            known_devices=list_device_profiles(mappings),
-        )
-        if params.get("model"):
-            model = str(params["model"]).strip()
-        cand = TemplateCandidate(
-            vendor=vendor,
-            model=model,
-            command=direct.command,
-            sample_output=direct.raw_output,
-            source_table="direct_input",
-            device_id=params.get("device_prompt") or direct.device_prompt or "chat-input",
-        )
-        force = bool(params.get("force_generate", True))
-        report = _process_candidate(
-            cand,
-            categories=categories,
+    direct = _direct_candidate(params, mappings)
+    if params.get("source_path"):
+        discovery = discover_directory_candidates(
+            params["source_path"],
             mappings=mappings,
-            templates_dir=templates_dir,
-            reports_dir=reports_dir,
-            max_retries=max_retries,
-            dry_run=dry_run,
-            force_overwrite=force,
-            explicit_category=params.get("category"),
-            mode="direct",
+            signatures=load_device_signatures(
+                Path(
+                    params.get("device_signatures_config")
+                    or SKILL_ROOT / "config" / "device_signatures.yaml"
+                )
+            ),
+            aliases=aliases,
+            recursive=bool(params.get("recursive", True)),
+            vendor=params.get("vendor"),
+            model=params.get("model"),
+            command_filter=params.get("command"),
         )
-        reports.append(report)
+        candidates = _directory_candidates(discovery.candidates)
+        mode = "directory"
+        discovery_metadata = {
+            "files_scanned": discovery.files_scanned,
+            "devices_detected": discovery.devices_detected,
+            "device_profiles": list(discovery.device_profiles),
+            "skipped_commands": list(discovery.skipped_commands),
+            "unresolved_files": list(discovery.unresolved_files),
+        }
+    elif direct:
+        candidates = [direct]
         mode = "direct"
-        candidates_count = 1
     else:
-        candidates = discover_missing_template_candidates(
-            patrol_db,
-            devices_db,
+        database_items = discover_missing_template_candidates(
+            Path(params.get("patrol_db") or root / "db" / "patrol.db"),
+            Path(params.get("devices_db") or root / "db" / "devices.db"),
             mappings,
             vendor_filter=params.get("vendor"),
             model_filter=params.get("model"),
             command_filter=params.get("command"),
         )
-        for cand in candidates:
-            reports.append(
-                _process_candidate(
-                    cand,
-                    categories=categories,
-                    mappings=mappings,
-                    templates_dir=templates_dir,
-                    reports_dir=reports_dir,
-                    max_retries=max_retries,
-                    dry_run=dry_run,
-                    force_overwrite=bool(params.get("force_generate", False)),
-                    explicit_category=params.get("category"),
-                    mode="database",
-                )
-            )
+        candidates = _database_candidates(database_items)
         mode = "database"
-        candidates_count = len(candidates)
 
-    summary_path = save_summary(reports, reports_dir) if reports else None
-    success_count = sum(1 for r in reports if r.template_generated)
-    all_parsed: list[dict[str, Any]] = []
-    for r in reports:
-        if r.parsed_records:
-            all_parsed.extend(r.parsed_records)
+    for candidate in candidates:
+        reports.append(
+            _process_candidate(
+                candidate,
+                categories=categories,
+                mappings=mappings,
+                templates_dir=templates_dir,
+                reports_dir=reports_dir,
+                max_retries=int(params.get("max_retries", 3)),
+                dry_run=bool(params.get("dry_run", False)),
+                publish=bool(params.get("publish", True)),
+                force_overwrite=bool(
+                    params.get("force_generate", mode == "direct")
+                ),
+                minimum_pass_rate=float(params.get("minimum_sample_pass_rate", 1.0)),
+                max_samples_per_prompt=int(params.get("max_samples_per_prompt", 3)),
+                explicit_category=str(params.get("category") or "").strip() or None,
+                mode=mode,
+            )
+        )
 
+    summary_path = save_summary(
+        reports,
+        reports_dir,
+        metadata={"mode": mode, **discovery_metadata},
+    )
+    generated = [report for report in reports if report.template_generated]
+    passed = sum(report.passed_samples for report in reports)
+    samples = sum(report.sample_count for report in reports)
     return {
-        "success": True,
-        "message": _build_summary_message(reports, mode=mode),
+        "success": not discovery_metadata.get("unresolved_files"),
+        "message": (
+            f"{mode} mode processed {len(reports)} candidate groups; "
+            f"published {len(generated)} templates"
+            + (
+                f"; commands: {', '.join(report.command for report in reports)}"
+                if reports
+                else ""
+            )
+        ),
         "mode": mode,
-        "total_candidates": candidates_count,
-        "success_count": success_count,
-        "parsed_records": all_parsed,
-        "reports": [r.to_dict() for r in reports],
-        "summary_path": str(summary_path) if summary_path else None,
-        "templates_dir": str(templates_dir),
+        "total_candidates": len(candidates),
+        "candidate_groups": len(candidates),
+        "success_count": len(generated),
+        "generated_templates": [
+            report.template_path for report in generated if report.template_path
+        ],
+        "validation_pass_rate": passed / samples if samples else 0.0,
+        "parsed_records": [
+            record for report in reports for record in (report.parsed_records or [])
+        ],
+        "reports": [report.to_dict() for report in reports],
+        "summary_path": str(summary_path),
+        "shared_templates_dir": str(templates_dir),
+        **discovery_metadata,
     }
-
-
-def _process_candidate(
-    cand: TemplateCandidate,
-    *,
-    categories: dict,
-    mappings: list,
-    templates_dir: Path,
-    reports_dir: Path,
-    max_retries: int,
-    dry_run: bool,
-    force_overwrite: bool,
-    explicit_category: str | None,
-    mode: str,
-) -> GenerationReport:
-    category = resolve_category(
-        cand.vendor,
-        cand.model,
-        cand.command,
-        mappings,
-        explicit_category=str(explicit_category) if explicit_category else None,
-    )
-    if not category:
-        report = GenerationReport(
-            vendor=cand.vendor,
-            model=cand.model,
-            command=cand.command,
-            category="",
-            template_generated=False,
-            compile_success=False,
-            record_count=0,
-            field_coverage=0,
-            validation_score=0,
-            retry_count=0,
-            skipped_reason="无法解析 category，请配置 command_mapping 或传入 category 参数",
-            mode=mode,
-        )
-        save_report(report, reports_dir)
-        return report
-
-    required_fields = required_fields_for_category(category, categories)
-    if not required_fields:
-        report = GenerationReport(
-            vendor=cand.vendor,
-            model=cand.model,
-            command=cand.command,
-            category=category,
-            template_generated=False,
-            compile_success=False,
-            record_count=0,
-            field_coverage=0,
-            validation_score=0,
-            retry_count=0,
-            skipped_reason=f"command_categories 缺少类别 {category}",
-            mode=mode,
-        )
-        save_report(report, reports_dir)
-        return report
-
-    template_path = resolve_template_path(templates_dir, cand.model, cand.command)
-    if template_path.is_file() and not force_overwrite:
-        # 已有模板：仍尝试解析并返回结构化结果（便于聊天展示）
-        existing = template_path.read_text(encoding="utf-8")
-        validation = validate_template(
-            existing,
-            cand.sample_output,
-            required_fields,
-            categories[category].validators,
-        )
-        report = GenerationReport(
-            vendor=cand.vendor,
-            model=cand.model,
-            command=cand.command,
-            category=category,
-            template_generated=False,
-            compile_success=validation.compile_success,
-            record_count=validation.record_count,
-            field_coverage=validation.field_coverage,
-            validation_score=validation.validation_score,
-            retry_count=0,
-            template_path=str(template_path),
-            skipped_reason="模板文件已存在（已用现有模板解析）",
-            parsed_records=validation.records or None,
-            mode=mode,
-        )
-        save_report(report, reports_dir)
-        return report
-
-    validators = categories[category].validators
-    template_text = ""
-    validation = None
-    retry_count = 0
-
-    for attempt in range(max_retries + 1):
-        if attempt == 0:
-            raw = generate_template_text(
-                vendor=cand.vendor,
-                model=cand.model,
-                command=cand.command,
-                cli_output=cand.sample_output,
-                required_fields=required_fields,
-            )
-        else:
-            retry_count = attempt
-            raw = generate_template_text(
-                vendor=cand.vendor,
-                model=cand.model,
-                command=cand.command,
-                cli_output=cand.sample_output,
-                required_fields=required_fields,
-                previous_template=template_text,
-                validation_errors=validation.errors if validation else [],
-                missing_fields=validation.missing_fields if validation else [],
-                value_errors=validation.value_errors if validation else [],
-            )
-
-        template_text = strip_llm_template(raw)
-        validation = validate_template(
-            template_text,
-            cand.sample_output,
-            required_fields,
-            validators,
-        )
-        if validation.is_valid:
-            break
-
-    parsed = validation.records if validation else []
-
-    if validation and validation.is_valid and not dry_run:
-        template_path.parent.mkdir(parents=True, exist_ok=True)
-        template_path.write_text(template_text, encoding="utf-8")
-        generated = True
-        saved_path = str(template_path)
-    elif validation and validation.is_valid and dry_run:
-        generated = False
-        saved_path = str(template_path)
-    else:
-        generated = False
-        saved_path = None
-
-    report = GenerationReport(
-        vendor=cand.vendor,
-        model=cand.model,
-        command=cand.command,
-        category=category,
-        template_generated=generated,
-        compile_success=bool(validation and validation.compile_success),
-        record_count=validation.record_count if validation else 0,
-        field_coverage=validation.field_coverage if validation else 0,
-        validation_score=validation.validation_score if validation else 0,
-        retry_count=retry_count,
-        template_path=saved_path,
-        parsed_records=parsed or None,
-        errors=(validation.errors if validation else ["验证未执行"]),
-        skipped_reason="dry_run" if (validation and validation.is_valid and dry_run) else None,
-        mode=mode,
-    )
-    save_report(report, reports_dir)
-    return report

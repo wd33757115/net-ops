@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import sys
 import tempfile
@@ -25,13 +24,26 @@ from config_loader import (  # noqa: E402
     resolve_device_mapping,
 )
 from db_reader import discover_missing_template_candidates  # noqa: E402
-from generate_templates import cmd_to_template_filename, model_to_dirname, resolve_template_path  # noqa: E402
-from report_generator import GenerationReport, save_report  # noqa: E402
+from device_detector import detect_device_identity  # noqa: E402
+from directory_reader import discover_directory_candidates  # noqa: E402
+from generate_templates import (  # noqa: E402
+    cmd_to_template_filename,
+    resolve_template_path,
+)
 from template_validator import (  # noqa: E402
     check_required_fields,
     strip_llm_template,
     validate_field_values,
     validate_template,
+)
+
+from src.core.patrol.command_splitter import split_cli_capture  # noqa: E402
+from src.core.patrol.raw_importer import _read_text_best_effort  # noqa: E402
+from src.core.patrol.textfsm_assets import (  # noqa: E402
+    command_template_name,
+    discover_textfsm_templates,
+    resolve_textfsm_template,
+    safe_slug,
 )
 
 try:
@@ -81,6 +93,17 @@ class TestConfigLoader(unittest.TestCase):
         mappings = load_command_mapping(skill_root / "config" / "command_mapping.yaml")
         self.assertEqual(resolve_device_mapping("CE12800", mappings), ("Huawei", "CE12800"))
 
+    def test_command_aliases(self):
+        from config_loader import load_command_aliases, normalize_command
+
+        skill_root = PROJECT_ROOT / "src" / "skills" / "textfsm-generator"
+        aliases = load_command_aliases(skill_root / "config" / "command_aliases.yaml")
+        self.assertEqual(normalize_command("display cpu-us", aliases), "display cpu")
+        self.assertEqual(
+            normalize_command("show env power", aliases),
+            "show environment power",
+        )
+
 
 class TestDbReader(unittest.TestCase):
     def _setup_dbs(self, tmp: Path):
@@ -89,7 +112,8 @@ class TestDbReader(unittest.TestCase):
         conn = sqlite3.connect(devices)
         try:
             conn.execute(
-                "CREATE TABLE devices (device_id INTEGER PRIMARY KEY, device_name TEXT, ip TEXT, model TEXT)"
+                "CREATE TABLE devices ("
+                "device_id INTEGER PRIMARY KEY, device_name TEXT, ip TEXT, model TEXT)"
             )
             conn.execute(
                 "INSERT INTO devices (device_name, ip, model) VALUES (?,?,?)",
@@ -177,12 +201,31 @@ Start
         self.assertEqual(missing, ["b"])
         self.assertEqual(cov, 50)
 
+    @unittest.skipUnless(HAS_TEXTFSM, "textfsm not installed")
+    def test_allow_known_empty_output(self):
+        template = """Value interface (\\S+)
+Value group (\\d+)
+Value state (\\S+)
+
+Start
+  ^${interface}\\s+${group}\\s+${state}
+"""
+        result = validate_template(
+            template,
+            "VRRP4 is not configured.",
+            ["interface", "group", "state"],
+            allow_empty=True,
+            empty_patterns=[r"VRRP4 is not configured"],
+        )
+        self.assertTrue(result.is_valid)
+        self.assertTrue(result.empty_accepted)
+
 
 class TestInputParser(unittest.TestCase):
     def test_parse_display_fan_block(self):
         from input_parser import parse_chat_cli_block
 
-        text = """<XA-FOTIC-Ant-SW>display fan
+        text = """<SW1>display fan
  Slot 1:
  Fan 1:
  State    : Normal
@@ -190,7 +233,7 @@ class TestInputParser(unittest.TestCase):
  State    : Normal"""
         parsed = parse_chat_cli_block(text)
         self.assertEqual(parsed.command, "display fan")
-        self.assertEqual(parsed.device_prompt, "XA-FOTIC-Ant-SW")
+        self.assertEqual(parsed.device_prompt, "SW1")
         self.assertIn("Slot 1:", parsed.raw_output)
         self.assertIn("Fan 1:", parsed.raw_output)
 
@@ -217,13 +260,13 @@ class TestInputParser(unittest.TestCase):
     def test_parse_with_natural_language_prefix(self):
         from input_parser import parse_chat_cli_block
 
-        text = """生成TEXTFSM解析模板，<XA-FOTIC-Ant-SW>display fan
+        text = """生成TEXTFSM解析模板，<SW1>display fan
  Slot 1:
  Fan 1:
  State    : Normal"""
         parsed = parse_chat_cli_block(text)
         self.assertEqual(parsed.command, "display fan")
-        self.assertEqual(parsed.device_prompt, "XA-FOTIC-Ant-SW")
+        self.assertEqual(parsed.device_prompt, "SW1")
         self.assertIn("Slot 1:", parsed.raw_output)
 
     def test_infer_vendor_model_semantic(self):
@@ -297,7 +340,6 @@ Start
   ^${slot}\\s+${cpu_5s}\\s+${cpu_1m}\\s+${cpu_5m}
 """
         skill_root = PROJECT_ROOT / "src" / "skills" / "textfsm-generator"
-        mappings = load_command_mapping(skill_root / "config" / "command_mapping.yaml")
 
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             tmp = Path(tmpdir)
@@ -309,7 +351,8 @@ Start
             conn = sqlite3.connect(devices)
             try:
                 conn.execute(
-                    "CREATE TABLE devices (device_id INTEGER PRIMARY KEY, device_name TEXT, ip TEXT, model TEXT)"
+                    "CREATE TABLE devices ("
+                    "device_id INTEGER PRIMARY KEY, device_name TEXT, ip TEXT, model TEXT)"
                 )
                 conn.execute(
                     "INSERT INTO devices (device_name, ip, model) VALUES (?,?,?)",
@@ -397,6 +440,217 @@ State    : Normal"""
             self.assertEqual(result["mode"], "direct")
             self.assertTrue(result.get("parsed_records") or result["success_count"] >= 0)
             self.assertIn("display fan", result["message"])
+
+    @patch("generate_templates.generate_template_text")
+    def test_directory_mode_publishes_shared_asset(self, mock_llm):
+        mock_llm.return_value = """Value model (\\S+)
+Value os_version (\\S+)
+
+Start
+  ^H3C Comware Software, Version ${os_version},
+  ^H3C ${model} uptime -> Record
+"""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            tmp = Path(tmpdir)
+            capture = tmp / "SW1-10.0.0.1.txt"
+            capture.write_text(
+                "<SW1>display version\n"
+                "H3C Comware Software, Version 7.1.070, Release 1\n"
+                "H3C S5130S-54S-HI-G uptime is 1 week\n",
+                encoding="utf-8",
+            )
+            from generate_templates import generate_templates
+
+            result = generate_templates(
+                {
+                    "source_path": str(capture),
+                    "templates_dir": str(tmp / "shared"),
+                    "reports_dir": str(tmp / "reports"),
+                    "max_retries": 0,
+                }
+            )
+            self.assertEqual(result["mode"], "directory")
+            self.assertEqual(result["files_scanned"], 1)
+            self.assertEqual(result["devices_detected"], 1)
+            self.assertEqual(result["success_count"], 1)
+            self.assertTrue(
+                (
+                    tmp
+                    / "shared"
+                    / "S5130S-54S-HI-G"
+                    / "display_version.textfsm"
+                ).is_file()
+            )
+
+    @patch("generate_templates.generate_template_text")
+    def test_unconfigured_directory_command_does_not_call_llm(self, mock_llm):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            tmp = Path(tmpdir)
+            capture = tmp / "SW1-10.0.0.1.txt"
+            capture.write_text(
+                "<SW1>display version\n"
+                "H3C Comware Software, Version 7.1.070, Release 1\n"
+                "H3C S5130S-54S-HI-G uptime is 1 week\n"
+                "<SW1>display clock\n12:00:00\n",
+                encoding="utf-8",
+            )
+            from generate_templates import generate_templates
+
+            result = generate_templates(
+                {
+                    "source_path": str(capture),
+                    "command": "display clock",
+                    "templates_dir": str(tmp / "shared"),
+                    "reports_dir": str(tmp / "reports"),
+                }
+            )
+            mock_llm.assert_not_called()
+            self.assertEqual(result["candidate_groups"], 0)
+            self.assertEqual(result["skipped_commands"][0]["command"], "display clock")
+
+
+class TestOfflineDirectoryDiscovery(unittest.TestCase):
+    def _discover(self, directory: Path):
+        from config_loader import (
+            load_command_aliases,
+            load_command_mapping,
+            load_device_signatures,
+        )
+
+        skill_root = PROJECT_ROOT / "src" / "skills" / "textfsm-generator"
+        return discover_directory_candidates(
+            directory,
+            mappings=load_command_mapping(skill_root / "config" / "command_mapping.yaml"),
+            signatures=load_device_signatures(
+                skill_root / "config" / "device_signatures.yaml"
+            ),
+            aliases=load_command_aliases(skill_root / "config" / "command_aliases.yaml"),
+        )
+
+    def test_multiple_same_model_files_are_grouped_once(self):
+        capture = (
+            "<SW>display version\n"
+            "H3C Comware Software, Version 7.1.070, Release 1\n"
+            "H3C S5130S-54S-HI-G uptime is 1 week\n"
+            "<SW>display cpu\n"
+            "Slot 1 CPU 0 CPU usage:\n"
+            "  10% in last 5 seconds\n"
+            "  9% in last 1 minute\n"
+            "  8% in last 5 minutes\n"
+            "<SW>display clock\n12:00:00\n"
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            directory = Path(tmpdir)
+            (directory / "SW1-10.0.0.1.txt").write_text(capture, encoding="utf-8")
+            (directory / "SW2-10.0.0.2.txt").write_text(capture, encoding="utf-8")
+            discovery = self._discover(directory)
+
+        self.assertEqual(discovery.files_scanned, 2)
+        self.assertEqual(discovery.devices_detected, 2)
+        self.assertEqual(discovery.unresolved_files, ())
+        cpu_groups = [
+            candidate
+            for candidate in discovery.candidates
+            if candidate.command == "display cpu"
+        ]
+        self.assertEqual(len(cpu_groups), 1)
+        self.assertEqual(len(cpu_groups[0].samples), 2)
+        self.assertEqual(cpu_groups[0].vendor, "H3C")
+        self.assertEqual(cpu_groups[0].model, "S5130S-54S-HI-G")
+        self.assertTrue(
+            any(
+                item["command"] == "display clock"
+                and item["reason"] == "command_not_configured"
+                for item in discovery.skipped_commands
+            )
+        )
+
+    def test_version_evidence_has_high_confidence(self):
+        from config_loader import load_device_signatures
+
+        skill_root = PROJECT_ROOT / "src" / "skills" / "textfsm-generator"
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            path = Path(tmpdir) / "CORE1-10.0.0.1.txt"
+            path.write_text(
+                "CORE1#show version\n"
+                "Cisco Nexus Operating System (NX-OS) Software\n"
+                "  cisco Nexus9000 C9364C Chassis\n",
+                encoding="utf-8",
+            )
+            blocks = split_cli_capture(_read_text_best_effort(path))
+            identity = detect_device_identity(
+                path=path,
+                blocks=blocks,
+                config=load_device_signatures(
+                    skill_root / "config" / "device_signatures.yaml"
+                ),
+            )
+        self.assertEqual((identity.vendor, identity.model), ("Cisco", "N9K-C9364C"))
+        self.assertGreaterEqual(identity.confidence, 0.99)
+        self.assertEqual(identity.evidence_command, "show version")
+
+
+class TestSharedTextfsmAssets(unittest.TestCase):
+    def test_safe_model_and_command_paths(self):
+        self.assertEqual(safe_slug("ISR4451-X/K9"), "ISR4451-X_K9")
+        self.assertEqual(
+            command_template_name("show ip interface brief"),
+            "show_ip_interface_brief.textfsm",
+        )
+
+    def test_shared_exact_then_legacy_fallback(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            root = Path(tmpdir)
+            shared = root / "shared"
+            legacy = root / "legacy"
+            legacy_file = legacy / "M1" / "show_version.textfsm"
+            legacy_file.parent.mkdir(parents=True)
+            legacy_file.write_text("legacy", encoding="utf-8")
+            self.assertEqual(
+                resolve_textfsm_template(
+                    model="M1",
+                    command="show version",
+                    shared_root=shared,
+                    legacy_root=legacy,
+                ),
+                legacy_file,
+            )
+            shared_file = shared / "M1" / "show_version.textfsm"
+            shared_file.parent.mkdir(parents=True)
+            shared_file.write_text("shared", encoding="utf-8")
+            self.assertEqual(
+                resolve_textfsm_template(
+                    model="M1",
+                    command="show version",
+                    shared_root=shared,
+                    legacy_root=legacy,
+                ),
+                shared_file,
+            )
+            mapping = discover_textfsm_templates(
+                model="M1",
+                shared_root=shared,
+                legacy_root=legacy,
+            )
+            self.assertEqual(mapping["show_version.textfsm"], shared_file)
+
+    def test_shared_family_fallback(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            root = Path(tmpdir)
+            shared = root / "shared"
+            family_file = shared / "NXOS9K" / "show_version.textfsm"
+            family_file.parent.mkdir(parents=True)
+            family_file.write_text("family", encoding="utf-8")
+            self.assertEqual(
+                resolve_textfsm_template(
+                    model="N9K-C9364C",
+                    family="NXOS9K",
+                    command="show version",
+                    shared_root=shared,
+                    legacy_root=root / "legacy",
+                ),
+                family_file,
+            )
 
 
 if __name__ == "__main__":

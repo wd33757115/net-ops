@@ -780,27 +780,23 @@ def route_after_executor_v2(state: SupervisorStateV2) -> str:
 def workflow_starter_node(state: SupervisorStateV2) -> SupervisorStateV2:
     """启动 Workflow 插件（长时任务在 Celery 执行）。"""
     from src.core.plugins.chat_intent import (
+        MissingRequiredContextError,
         MissingTicketIdError,
         build_chat_workflow_context,
+        build_default_workflow_context,
         format_workflow_start_message,
         get_chat_intent_registry,
-        require_ticket_id_from_query,
     )
     from src.core.workflows.engine import WorkflowEngine
 
     workflow_name = state.get("workflow_type") or "itsm-firewall-change"
     intent = get_chat_intent_registry().get_intent(workflow_name)
-    query = _get_query(state)
     try:
         if intent:
             context = build_chat_workflow_context(state, intent)
         else:
-            context = {
-                "ticket_id": require_ticket_id_from_query(query),
-                "ticket_title": state.get("ticket_title") or "Workflow 任务",
-                "policy_file_url": state.get("uploaded_file_path"),
-            }
-    except MissingTicketIdError as exc:
+            context = build_default_workflow_context(state)
+    except (MissingTicketIdError, MissingRequiredContextError) as exc:
         return {
             **state,
             "messages": state["messages"] + [AIMessage(content=str(exc))],

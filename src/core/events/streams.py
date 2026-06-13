@@ -5,6 +5,7 @@
 
 STREAM_SKILL_EXECUTION = "netops:skill.execution.v1"
 STREAM_WORKFLOW = "netops:workflow.v1"
+STREAM_NETWORK_EVENT = "netops:network.events.v1"
 STREAM_DLQ = "netops:events.dlq"
 
 GROUP_AUDIT = "netops-audit"

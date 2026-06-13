@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
+name: patrol-history-change-event
+description: 导入两个历史巡检目录，对比变化并构建运维事件
+version: "1.0"
+
+steps:
+  - name: baseline_ingest
+    label: 导入上一季度巡检
+    skill: patrol-raw-ingestor
+    inputs:
+      file_path: ${context.baseline_path}
+      db_path: ${context.db_path}
+      run_id: ${context.baseline_run_id}
+
+  - name: current_ingest
+    label: 导入本季度巡检
+    skill: patrol-raw-ingestor
+    inputs:
+      file_path: ${context.current_path}
+      db_path: ${context.db_path}
+      run_id: ${context.current_run_id}
+
+  - name: change_detection
+    label: 对比季度巡检变化
+    skill: change-detector
+    inputs:
+      db_path: ${context.db_path}
+      previous_run_id: ${steps.baseline_ingest.result.run_id}
+      current_run_id: ${steps.current_ingest.result.run_id}
+      persist: true
+
+  - name: event_building
+    label: 构建运维事件
+    skill: event-builder
+    inputs:
+      db_path: ${context.db_path}
+      run_id: ${steps.current_ingest.result.run_id}
+      persist: true
+      publish: ${context.publish_events}
+
+on_complete:
+  message: 历史巡检变化与事件分析已完成
+  notification:
+    title: 历史巡检分析已完成
+    body: 两个巡检周期的数据、变化记录和运维事件已生成。
+    level: success

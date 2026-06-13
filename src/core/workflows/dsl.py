@@ -63,10 +63,18 @@ class ChatIntentDSL(BaseModel):
     priority: int = 50
     description: str = ""
     match: ChatIntentMatchDSL = Field(default_factory=ChatIntentMatchDSL)
+    required_context: list[str] = Field(
+        default_factory=list,
+        description="启动 Workflow 前必须解析出的上下文字段，如 ticket_id",
+    )
     context_from_state: dict[str, str] = Field(default_factory=dict)
+    context_from_query: dict[str, str] = Field(
+        default_factory=dict,
+        description="将通用查询提取结果映射到 Workflow 上下文，如 baseline_path: path_0",
+    )
     context_defaults: dict[str, Any] = Field(default_factory=dict)
     response_template: str = Field(
-        default="[OK] 已启动 Workflow\n\n- **流程 ID**: `{run_id}`\n- **工单**: {ticket_id}\n- **步骤**: {workflow_description}\n"
+        default="[OK] 已启动 Workflow\n\n- **流程 ID**: `{run_id}`\n- **步骤**: {workflow_description}\n"
     )
 
 

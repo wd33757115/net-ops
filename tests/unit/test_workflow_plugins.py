@@ -16,6 +16,34 @@ def test_load_firewall_workflow_plugin():
     assert tpl.steps[2].when == "${context.callback_url}"
 
 
+def test_load_patrol_change_event_workflow():
+    load_workflows(force=True)
+    tpl = get_template("patrol-change-event")
+
+    assert tpl is not None
+    assert [step.skill_name for step in tpl.steps] == [
+        "device-patrol",
+        "change-detector",
+        "event-builder",
+    ]
+    assert (
+        tpl.steps[1].inputs["current_run_id"]
+        == "${steps.patrol.result.snapshot_run_id}"
+    )
+    assert tpl.steps[2].inputs["run_id"] == "${steps.patrol.result.snapshot_run_id}"
+
+
+def test_patrol_chat_intent_has_no_ticket_requirement():
+    from src.core.plugins.chat_intent import get_chat_intent_registry
+
+    registry = get_chat_intent_registry()
+    registry.load(force=True)
+    intent = registry.get_intent("patrol-change-event")
+
+    assert intent is not None
+    assert intent.required_context == []
+
+
 def test_resolve_active_steps_without_callback():
     from src.core.workflows.registry import format_steps_flow, resolve_active_steps
 

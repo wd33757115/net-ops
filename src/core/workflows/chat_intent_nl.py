@@ -141,7 +141,7 @@ def suggest_chat_intent_from_nl(
         "chat_intent": chat.model_dump(),
         "chat_intent_yaml": yaml.dump(yaml_dict, allow_unicode=True, sort_keys=False),
         "tips": [
-            "聊天触发话术需包含工单号（如 REQ2025001）",
+            "仅当 Workflow 声明 required_context 时，聊天请求才需要提供对应信息",
             "保存前请在「匹配预览」中验证",
         ],
     }

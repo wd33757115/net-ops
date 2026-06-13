@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 wangdong <wangdong5919@163.com>
+# SPDX-License-Identifier: Apache-2.0
+
+name: patrol-change-event
+description: 设备巡检、历史变化检测与运维事件构建
+version: "1.0"
+
+steps:
+  - name: patrol
+    label: 执行设备巡检
+    skill: device-patrol
+    inputs:
+      filter_params: ${context.filter_params}
+      ticket_id: ${context.ticket_id}
+      save_baseline: ${context.save_baseline}
+
+  - name: change_detection
+    label: 检测网络变化
+    skill: change-detector
+    inputs:
+      db_path: ${steps.patrol.result.snapshot_db}
+      current_run_id: ${steps.patrol.result.snapshot_run_id}
+      persist: true
+
+  - name: event_building
+    label: 构建运维事件
+    skill: event-builder
+    inputs:
+      db_path: ${steps.patrol.result.snapshot_db}
+      run_id: ${steps.patrol.result.snapshot_run_id}
+      persist: true
+      publish: ${context.publish_events}
+
+on_complete:
+  message: 巡检变化分析已完成
+  notification:
+    title: 巡检变化分析已完成
+    body: 巡检快照、变化记录和运维事件已生成。
+    level: success
+

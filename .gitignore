@@ -160,6 +160,19 @@ deployment/qdrant_storage/
 # ============================================================
 src/skills/device-backup/data/db/
 src/skills/device-backup/data/outputs/
+src/skills/textfsm-generator/reports/*.json
+src/skills/textfsm-generator/reports/rejected/
+src/skills/shared/textfsm-templates/*
+!src/skills/shared/textfsm-templates/.gitkeep
+templates/**/*.textfsm
+
+# Local patrol captures and artifacts derived from private captures
+dev_test/
+dev_test1/
+dev_test*/
+docs/test-reports/
+.runtime/
+_diag_out.txt
 
 # ============================================================
 # Node.js / Frontend

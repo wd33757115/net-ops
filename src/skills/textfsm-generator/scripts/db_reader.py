@@ -100,7 +100,11 @@ def discover_missing_template_candidates(
     with sqlite3.connect(str(patrol_db)) as conn:
         rows: list[tuple[str, str, str | None, str | None, str]] = []
         for table, has_run in (("patrol_data", True), ("baseline_data", False)):
-            for device_id, command, structured, text_output in _fetch_rows(conn, table, has_run_id=has_run):
+            for device_id, command, structured, text_output in _fetch_rows(
+                conn,
+                table,
+                has_run_id=has_run,
+            ):
                 if not _is_empty_structured(structured):
                     continue
                 rows.append((device_id, command, structured, text_output, table))
